@@ -11,8 +11,8 @@ lib = load(
 )
 
 # 测试用法
-a = torch.randn(1024, device='cuda')
-b = torch.randn(1024, device='cuda')
+a = torch.randn(8, device='cuda') # 1024
+b = torch.randn(8, device='cuda')
 out = torch.empty_like(a)
 
 lib.vector_add(a, b, out)

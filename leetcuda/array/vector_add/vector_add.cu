@@ -1,20 +1,42 @@
 
-
+#include <cstdio>
 
 #include <cuda_runtime.h>
 #include <torch/extension.h>
 
+/**
+ * 1.每个执行内核的线程都会被分配一个唯一的线程ID，该ID可通过内置变量在内核中访问.
+ *
+ *
+ */
+
 __global__ void vector_add_kernel(const float* a, const float* b, float* out, int n) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n) {
-    out[i] = a[i] + b[i];
-  }
+    printf("blockIdx.x:%d, blockDim.x:%d, threadIdx.x:%d\n", blockIdx.x, blockDim.x, threadIdx.x);
+    /**
+     *
+blockIdx.x:0, blockDim.x:8, threadIdx.x:0
+blockIdx.x:0, blockDim.x:8, threadIdx.x:1
+blockIdx.x:0, blockDim.x:8, threadIdx.x:2
+blockIdx.x:0, blockDim.x:8, threadIdx.x:3
+blockIdx.x:0, blockDim.x:8, threadIdx.x:4
+blockIdx.x:0, blockDim.x:8, threadIdx.x:5
+blockIdx.x:0, blockDim.x:8, threadIdx.x:6
+blockIdx.x:0, blockDim.x:8, threadIdx.x:7
+tensor([-0.5939,  1.1469, -0.8514,  1.6788, -2.0465], device='cuda:0') tensor([-0.5939,  1.1469, -0.8514,  1.6788, -2.0465], device='cuda:0')
+     */
+    __syncthreads();
+
+    // i 为 thread 全局坐标,第 blockIdx.x 的第 threadIdx.x 的 thread
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        out[i] = a[i] + b[i];
+    }
 }
 
 // PyTorch 接口函数
 void vector_add(torch::Tensor a, torch::Tensor b, torch::Tensor out) {
-  int n = a.size(0);
-  const int threads = 256;
+  int n = a.size(0); // 1024
+  const int threads = 8; // 256
   const int blocks = (n + threads - 1) / threads; // (1024+256-1)/256=4
   vector_add_kernel<<<blocks, threads>>>(
       a.data_ptr<float>(),
