@@ -11,6 +11,8 @@ class KVCache:
         self.free_blocks = list(range(num_blocks)) # [0, ..., num_blocks-1], []int
         self.allocated_blocks: Dict[int, List[int]] = {} # map[int][]int
         self.block_tables: Dict[int, List[Tuple[int, int]]] = {} # map[int][][2]int
+
+        # ??? Dict[int, List[torch.Tensor]]
         self.paged_attention_block_tables: Dict[int, List[List[int]]] = {} # map[int][][]int
 
         # key_cache = [num_blocks, num_heads, head_size // x, block_size, x] 这里把 head_size 也分成 x 组
@@ -38,12 +40,28 @@ class KVCache:
         return allocated, slot_mappings, self.paged_attention_block_tables[seq_id]
 
 
+    def get_block_table(self, seq_id: int) -> List[Tuple[int, int]]:
+        if seq_id not in self.block_tables:
+            raise ValueError(f"Seq id {seq_id} is not in block_tables")
+
+        return self.block_tables[seq_id]
+
+    def get_paged_attention_block_table(self, seq_id: int):
+        if seq_id not in self.paged_attention_block_tables:
+            raise ValueError(f"Seq id {seq_id} is not in paged_attention_block_tables")
+
+        return self.paged_attention_block_tables[seq_id]
+
+
+
     def free(self, seq_id: int):
         if seq_id in self.allocated_blocks:
             self.free_blocks.extend(self.allocated_blocks[seq_id])
             del self.allocated_blocks[seq_id]
             del self.block_tables[seq_id]
             del self.paged_attention_block_tables[seq_id]
+
+
 
 
 

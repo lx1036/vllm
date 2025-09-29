@@ -26,4 +26,31 @@ class BlockManager:
         allocated, slot_mappings, paged_attention_block_table = self.kv_cache.allocate_for_prefill(seq_id, num_layers, seq_len)
         return seq_id, allocated, slot_mappings, paged_attention_block_table
 
+    def decode_step(self, seq_id: int, input_len: int):
+
+
+        block_table = self.kv_cache.get_block_table(seq_id)
+        paged_attention_block_table = self.kv_cache.get_paged_attention_block_table(seq_id)
+
+
+        for block_id, layer_blocks in enumerate(paged_attention_block_table):
+            last_block = -1
+            for i in range(1, len(layer_blocks[0])):
+                if layer_blocks[0][i] == -1:
+                    last_block = layer_blocks[0][i-1]
+                    break
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

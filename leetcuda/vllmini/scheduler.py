@@ -41,6 +41,7 @@ class Scheduler:
         # (batch_size, num_heads, seq_len, seq_len)
         attention_mask = generate_triangular_mask(1, self.block_manager.num_heads, seq_len)
 
+        # 1. Prefill
         seq_len = input_ids.size(1) # [batch_size, seq_len]
         logits = self.model(
             input_ids=input_ids,
@@ -81,7 +82,9 @@ class Scheduler:
                 # key_cache, value_cache 都为空值
                 key_cache, value_cache = self.block_manager.kv_cache.key_cache, self.block_manager.kv_cache.value_cache
 
+                paged_attention_block_table, new_slot_mappings = self.block_manager.decode_step(seq_id, 1)
 
+                # 2. Decode
                 logits = self.model(
                     input_ids=input_ids,
                     position_ids=position_ids, # 生成一个初始化的 position_ids tensor，后续会从模型权重里加载对应的真实的值
