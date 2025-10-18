@@ -1,0 +1,13 @@
+
+
+
+{
+  "local_hostname": "localhost",
+  "metadata_server": "http://127.0.0.1:8081/metadata",
+  "protocol": "tcp",
+  "master_server_address": "localhost:50051",
+  "global_segment_size": 3355443200,
+  "local_buffer_size": 1073741824,
+  "transfer_timeout": 1
+}
+

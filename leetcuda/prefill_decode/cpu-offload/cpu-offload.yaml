@@ -1,0 +1,15 @@
+
+
+
+
+
+# 256 Tokens per KV Chunk
+chunk_size: 256
+
+# 当与磁盘后端或远程后端（ Redis、Mooncake、Valkey或InfinistoreLMCACHE_LOCAL_CPU=True ）结合使用时，我们可以将 CPU RAM 视为“热缓存”，它将包含来自磁盘和远程存储的“最热”（最近访问）的 KV 缓存子集。
+# Enable CPU memory backend
+local_cpu: true # default
+
+# 5GB of Pinned CPU memory
+max_local_cpu_size: 5.0 # default
+
