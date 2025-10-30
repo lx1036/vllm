@@ -3,7 +3,11 @@
 
 import sys
 import os
+import logging
+
 from mooncake.engine import TransferEngine
+
+logger = logging.getLogger(__name__)
 
 def main():
     os.environ['MC_LOG_LEVEL'] = 'INFO'
@@ -11,6 +15,23 @@ def main():
     os.environ['MC_CUSTOM_TOPO_JSON'] = ''
     engine = TransferEngine()
     print('Local topology: ', engine.get_local_topology())
+
+    # local_hostname = "10.252.112.16"
+    # HOSTNAME = local_hostname # "10.252.112.16" # localhost for simple demo
+    # METADATA_SERVER = "P2PHANDSHAKE" # [ETCD_SERVER_URL, P2PHANDSHAKE, ...]
+    # PROTOCOL = "rdma" # [rdma, tcp, ...]
+    # DEVICE_NAME = "mlx5_ib1" # auto discovery if empty
+    # ret_value = engine.initialize(
+    #     HOSTNAME,
+    #     METADATA_SERVER,
+    #     PROTOCOL,
+    #     DEVICE_NAME
+    # )
+    # if ret_value != 0:
+    #     logger.error("Mooncake Transfer Engine initialization failed.")
+    #     raise RuntimeError("Mooncake Transfer Engine initialization failed.")
+    #
+    # print('Local topology: ', engine.get_local_topology())
 
 if __name__ == "__main__":
     sys.exit(main())
