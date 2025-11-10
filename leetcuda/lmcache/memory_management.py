@@ -15,6 +15,13 @@ class MemoryObj(metaclass=abc.ABCMeta):
         """
         raise NotImplementedError
 
+    @property
+    @abc.abstractmethod
+    def byte_array(self) -> bytes:
+        """
+        Get the byte array from the MemoryObj.
+        """
+        raise NotImplementedError
 
 class MemoryAllocatorInterface(metaclass=abc.ABCMeta):
 
