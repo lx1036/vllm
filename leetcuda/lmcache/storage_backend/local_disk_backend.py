@@ -1,18 +1,32 @@
 import asyncio
 import os
 import threading
-from typing import Optional
+from collections import OrderedDict
+from typing import Optional, List
 from concurrent.futures import Future
 
 import aiofiles
 
+from ..cache_controller.message import KVAdmitMsg, KVEvictMsg
 from ..memory_management import MemoryObj, MemoryAllocatorInterface
 
 from .abstract_backend import StorageBackendInterface
-from ..utils import CacheEngineKey
+from ..observability import LMCStatsMonitor
+from ..utils import CacheEngineKey, _lmcache_nvtx_annotate, DiskCacheMetadata
 from ..log import init_logger
+from ..config import LMCacheEngineConfig
+from ..lookup_server.abstract_server import LookupServerInterface
+
+
+from ..cache_controller.worker import LMCacheWorker
+
+
+from evictor.lru_evictor import LRUEvictor, PutStatus
+import torch
 
 logger = init_logger(__name__)
+
+
 
 
 class LocalDiskBackend(StorageBackendInterface):
@@ -23,11 +37,20 @@ class LocalDiskBackend(StorageBackendInterface):
             loop: asyncio.AbstractEventLoop,
             memory_allocator: MemoryAllocatorInterface,
             dst_device: str = "cuda",
-            lmcache_worker: Optional["LMCacheWorker"] = None,
+            lmcache_worker: Optional[LMCacheWorker] = None,
             lookup_server: Optional[LookupServerInterface] = None,
     ):
+        self.loop = loop
+        self.lmcache_worker = lmcache_worker
+        self.instance_id = config.lmcache_instance_id
+        self.memory_allocator = memory_allocator
+        self.lookup_server = lookup_server
+
+
+
 
         self.disk_lock = threading.Lock()
+        self.dict: OrderedDict[CacheEngineKey, DiskCacheMetadata] = OrderedDict()
 
         assert config.local_disk is not None
         self.path: str = config.local_disk
@@ -35,9 +58,13 @@ class LocalDiskBackend(StorageBackendInterface):
             os.makedirs(self.path)
             logger.info(f"Created local disk cache directory: {self.path}")
 
+        # Initialize the evictor
+        self.evictor = LRUEvictor(max_cache_size=config.max_local_disk_size)
 
         self.put_tasks: List[CacheEngineKey] = []
 
+        self.usage = 0
+        self.stats_monitor = LMCStatsMonitor.GetOrCreate()
 
 
 
@@ -46,13 +73,22 @@ class LocalDiskBackend(StorageBackendInterface):
 
 
 
-    def submit_put_task(
-            self,
-            key: CacheEngineKey,
-            memory_obj: MemoryObj,
-    ) -> Optional[Future]:
 
 
+    def submit_put_task(self, key: CacheEngineKey, memory_obj: MemoryObj) -> Optional[Future]:
+        assert memory_obj.tensor is not None
+
+        # Update cache recency
+        evict_keys, put_status = self.evictor.update_on_put(self.dict, memory_obj.get_physical_size())
+        if put_status == PutStatus.ILLEGAL:
+            return None
+        # evict caches
+        for evict_key in evict_keys:
+            self.remove(evict_key)
+        if self.lookup_server is not None:
+            self.lookup_server.batched_remove(evict_keys)
+
+        self.memory_allocator.ref_count_up(memory_obj)
 
         self.disk_lock.acquire()
         self.put_tasks.append(key)
@@ -64,11 +100,7 @@ class LocalDiskBackend(StorageBackendInterface):
 
     @_lmcache_nvtx_annotate
     @torch.inference_mode()
-    async def async_save_bytes_to_disk(
-            self,
-            key: CacheEngineKey,
-            memory_obj: MemoryObj,
-    ) -> None:
+    async def async_save_bytes_to_disk(self, key: CacheEngineKey, memory_obj: MemoryObj) -> None:
         """
         Convert KV to bytes and async store bytes to disk.
         """
@@ -91,3 +123,42 @@ class LocalDiskBackend(StorageBackendInterface):
 
     def _key_to_path(self, key: CacheEngineKey) -> str:
         return self.path + key.to_string().replace("/", "-") + ".pt"
+
+    def insert_key(self, key: CacheEngineKey, memory_obj: MemoryObj) -> None:
+        path = self._key_to_path(key)
+        size = memory_obj.get_size()
+        shape = memory_obj.metadata.shape
+        dtype = memory_obj.metadata.dtype
+
+        has_stored = False
+        with self.disk_lock:
+            # Need to do reinsert to update cache recency
+            if key in self.dict:
+                self.dict.pop(key)
+                has_stored = True
+
+            self.dict[key] = DiskCacheMetadata(path, size, shape, dtype)
+
+        # push kv admit msg
+        if self.lmcache_worker is not None and not has_stored:
+            self.lmcache_worker.put_msg(KVAdmitMsg(self.instance_id, key.worker_id, key.chunk_hash, "disk"))
+
+    def remove(self, key: CacheEngineKey) -> None:
+        path = self.dict[key].path
+
+        self.disk_lock.acquire()
+        self.dict.pop(key)
+        self.disk_lock.release()
+
+        size = os.path.getsize(path)
+        self.usage -= size
+        self.stats_monitor.update_local_storage_usage(self.usage)
+
+        # 删除文件
+        os.remove(path)
+
+        # push kv evict msg
+        if self.lmcache_worker is not None:
+            self.lmcache_worker.put_msg(KVEvictMsg(self.instance_id, key.worker_id, key.chunk_hash, "disk"))
+
+

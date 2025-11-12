@@ -2,6 +2,7 @@ from typing import Optional, Dict, List, Union
 
 import torch
 
+from leetcuda.lmcache.cache_controller.worker import LMCacheWorker
 from log import init_logger
 from storage_backend.storage_manager import StorageManager, DistributedStorageManager
 from token_database import TokenDatabase, ChunkedTokenDatabase
@@ -33,6 +34,9 @@ class LMCacheEngine:
         self.lookup_server: Optional[LookupServerInterface] = None
         self.gpu_connector = gpu_connector
 
+        self.lmcache_worker: Optional[LMCacheWorker] = None
+        if self.config.enable_controller:
+            self.lmcache_worker = LMCacheWorker(config, metadata, self)
 
         self.storage_manager = StorageManager(config, metadata, self.memory_allocator, self.lmcache_worker, self.lookup_server)
 
@@ -52,6 +56,7 @@ class LMCacheEngine:
                 logger.warning("Failed to allocate memory for the KV cache. The KV cache will not be stored.")
                 break
 
+            self.gpu_connector.from_gpu(memory_obj, start, end, **kwargs)
             self.storage_manager.put(key, memory_obj)
 
     def store_distributed(self,tokens: torch.Tensor, mask: Optional[torch.Tensor] = None, **kwargs) -> None:

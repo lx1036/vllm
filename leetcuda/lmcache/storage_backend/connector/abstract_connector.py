@@ -1,15 +1,14 @@
 import abc
-import asyncio
+from typing import List, Optional
 
-
-
-from redis_connector import RedisConnector
+from leetcuda.lmcache.log import init_logger
+from leetcuda.lmcache.memory_management import MemoryObj
+from leetcuda.lmcache.utils import CacheEngineKey
 
 logger = init_logger(__name__)
 
 
 class RemoteConnector(metaclass=abc.ABCMeta):
-
     @abc.abstractmethod
     async def put(self, key: CacheEngineKey, memory_obj: MemoryObj):
         raise NotImplementedError
@@ -20,30 +19,36 @@ class RemoteConnector(metaclass=abc.ABCMeta):
         raise NotImplementedError
 
 
+    @abc.abstractmethod
+    async def exists(self, key: CacheEngineKey) -> bool:
+        """
+        Check if the remote server contains the key
 
+        Input:
+            key: a string
 
-def CreateConnector(url: str, loop: asyncio.AbstractEventLoop, memory_allocator: MemoryAllocatorInterface) -> RemoteConnector:
+        Returns:
+            True if the cache engine contains the key, False otherwise
+        """
+        raise NotImplementedError
 
-    match connector_type:
-        case "redis":
-            connector = RedisConnector(host, port, loop, memory_allocator)
+    @abc.abstractmethod
+    async def list(self) -> List[str]:
+        """
+        List all keys in the remote server
 
-        case "lm":
+        Returns:
+            A list of keys in the remote server
+        """
+        raise NotImplementedError
 
+    @abc.abstractmethod
+    async def close(self):
+        """
+        Close remote server
 
-        case "infinistore":
-
-
-        case "mooncakestore":
-
-        case _:
-            raise ValueError(f"Unknown connector type {connector_type} (url is: {url})")
-
-
-    logger.info(f"Created connector {connector} for {connector_type}")
-    return connector
-
-
+        """
+        raise NotImplementedError
 
 
 

@@ -1,10 +1,12 @@
 import asyncio
 import threading
-from typing import Optional, OrderedDict, List
+from typing import Optional, OrderedDict, List, Dict, Tuple
 
 from abstract_backend import StorageBackendInterface
 from nixl_backend import NixlBackend
 import torch
+
+from ..log import init_logger
 from ..memory_management import MemoryObj, MemoryAllocatorInterface
 from ..utils import CacheEngineKey
 from ..config import LMCacheEngineConfig, LMCacheEngineMetadata
@@ -12,6 +14,9 @@ from ..lookup_server.abstract_server import LookupServerInterface
 from remote_backend import RemoteBackend
 from local_disk_backend import LocalDiskBackend
 from ..cache_controller.worker import LMCacheWorker
+from concurrent.futures import Future
+
+logger = init_logger(__name__)
 
 def CreateStorageBackends(
         config: LMCacheEngineConfig,
@@ -31,11 +36,13 @@ def CreateStorageBackends(
     if config.local_disk and config.max_local_disk_size > 0:
         local_disk_backend = LocalDiskBackend(config, loop, memory_allocator, dst_device, lmcache_worker, lookup_server)
         backend_name = str(local_disk_backend)
+        logger.info(f"local_disk_backend name: {backend_name}")
         storage_backends[backend_name] = local_disk_backend
 
     if config.remote_url is not None:
         remote_backend = RemoteBackend(config, metadata, loop, memory_allocator, dst_device, lookup_server)
         backend_name = str(remote_backend)
+        logger.info(f"remote_backend name: {backend_name}")
         storage_backends[backend_name] = remote_backend
 
     config.enable_blending = False
@@ -58,9 +65,17 @@ class StorageManager:
                  lookup_server: Optional[LookupServerInterface] = None
                  ):
 
+        self.loop = asyncio.new_event_loop()
+        self.thread = threading.Thread(target=self.loop.run_forever)
+        self.thread.start()
 
+        self.put_tasks: Dict[str, Dict[CacheEngineKey, Tuple[Future, MemoryObj]]] = {}
+        #TODO: remove hardcode
+        dst_device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.storage_backends: OrderedDict[str, StorageBackendInterface] = CreateStorageBackends(config, metadata, self.loop, allocator, dst_device, lmcache_worker, lookup_server)
+        for backend_name in self.storage_backends.keys():
+            self.put_tasks[backend_name] = {}
 
-        self.storage_backends: OrderedDict[str, StorageBackendInterface] = CreateStorageBackends()
         self.memory_allocator = allocator
 
         self.manager_lock = threading.Lock()

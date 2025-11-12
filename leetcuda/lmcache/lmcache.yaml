@@ -1,0 +1,17 @@
+
+
+# backend CPU
+#local_cpu: True
+#max_local_cpu_size: 5
+
+
+
+
+
+
+# backend local_disk
+max_local_disk_size: 0
+remote_serde: NULL
+# URL of the controller server
+controller_url: "localhost:9001"
+

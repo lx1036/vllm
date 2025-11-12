@@ -1,8 +1,12 @@
 from enum import Enum
+from typing import List
 
 from cache_engine import LMCacheEngineBuilder
 from utils import ENGINE_NAME
+from config import LMCacheEngineConfig
 from vllm.worker.model_runner import ModelInputForGPUWithSamplingMetadata
+from vllm.attention.backends.flash_attn import FlashAttentionMetadata
+
 import torch
 from log import init_logger
 
@@ -57,7 +61,9 @@ def lmcache_store_kv(
     engine = LMCacheEngineBuilder.get(ENGINE_NAME)
     assert engine is not None, "LMCache engine is not initialized."
 
-
+    assert isinstance(model_input.attn_metadata, FlashAttentionMetadata), "Only FlashAttention backend is supported for now."
+    seq_lens = model_input.attn_metadata.seq_lens
+    assert seq_lens is not None
 
     seq_group_list = model_input.sampling_metadata.seq_groups
     assert seq_group_list is not None
@@ -100,3 +106,12 @@ def lmcache_store_kv(
 
 
 def lmcache_retrieve_kv():
+
+
+
+
+def need_gpu_interm_buffer(lmcache_config: LMCacheEngineConfig):
+    if lmcache_config.local_cpu:
+        return True
+    else:
+        return False

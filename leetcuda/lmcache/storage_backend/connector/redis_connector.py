@@ -1,6 +1,10 @@
+from typing import Optional
+
 import redis
 
-from abstract_connector import RemoteConnector
+from leetcuda.lmcache.memory_management import MemoryObj
+from leetcuda.lmcache.storage_backend.connector import RemoteConnector
+from leetcuda.lmcache.utils import CacheEngineKey
 
 
 class RedisConnector(RemoteConnector):

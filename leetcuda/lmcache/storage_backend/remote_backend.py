@@ -12,7 +12,13 @@ from connector.abstract_connector import CreateConnector
 
 class RemoteBackend(StorageBackendInterface):
 
-    def __init__(self):
+    def __init__(self,
+                 config: LMCacheEngineConfig,
+                 metadata: LMCacheEngineMetadata,
+                 loop: asyncio.AbstractEventLoop,
+                 memory_allocator: MemoryAllocatorInterface,
+                 dst_device: str = "cuda",
+                 lookup_server: Optional[LookupServerInterface] = None,):
 
         self.connection = CreateConnector(config.remote_url, loop, memory_allocator)
 
