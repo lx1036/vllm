@@ -1,11 +1,9 @@
 from collections import OrderedDict
 from typing import Union, List, Tuple
 
-from ...log import init_logger
-
-from base_evictor import BaseEvictor, PutStatus
-from ...utils import CacheEngineKey
-
+from leetcuda.lmcache.storage_backend.evictor.base_evictor import BaseEvictor, PutStatus
+from leetcuda.lmcache.utils import CacheEngineKey
+from leetcuda.lmcache.log import init_logger
 
 logger = init_logger(__name__)
 
@@ -27,6 +25,7 @@ class LRUEvictor(BaseEvictor):
         cache_dict.move_to_end(key)
 
     def update_on_put(self, cache_dict: OrderedDict, cache_size: int) -> Tuple[List[CacheEngineKey], PutStatus]:
+        return None
 
 
 

@@ -93,6 +93,26 @@ class MemoryObj(metaclass=abc.ABCMeta):
         """
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def get_shape(self) -> torch.Size:
+        """
+        Get the shape of the MemoryObj.
+        """
+        raise NotImplementedError
+
+    def get_dtype(self) -> Optional[torch.dtype]:
+        """
+        Get the dtype of the MemoryObj.
+        """
+        return None
+
+    @abc.abstractmethod
+    def get_memory_format(self) -> MemoryFormat:
+        """
+        Get the memory format of the MemoryObj.
+        """
+        raise NotImplementedError
+
 @dataclass
 class FreeBlock:
     """Metadata class used by the memory allocators

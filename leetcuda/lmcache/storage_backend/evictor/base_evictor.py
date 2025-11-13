@@ -1,7 +1,7 @@
 import abc
 from collections import OrderedDict
 from enum import Enum
-from typing import Tuple, List
+from typing import Tuple, List, Union
 
 from ...utils import CacheEngineKey
 
@@ -43,3 +43,11 @@ class BaseEvictor(metaclass=abc.ABCMeta):
         raise NotImplementedError
 
 
+class DummyEvictor(BaseEvictor):
+    def update_on_get(self, key: Union[CacheEngineKey, str], cache_dict: OrderedDict) -> None:
+        # Dummy implementation does nothing
+        pass
+
+    def update_on_put(self, cache_dict: OrderedDict, cache_size: int):
+        # Dummy implementation does not evict anything
+        return [], PutStatus.LEGAL

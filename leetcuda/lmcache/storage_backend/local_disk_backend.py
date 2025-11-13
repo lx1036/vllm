@@ -7,22 +7,19 @@ from concurrent.futures import Future
 
 import aiofiles
 
-from ..cache_controller.message import KVAdmitMsg, KVEvictMsg
-from ..memory_management import MemoryObj, MemoryAllocatorInterface
-
-from .abstract_backend import StorageBackendInterface
-from ..observability import LMCStatsMonitor
-from ..utils import CacheEngineKey, _lmcache_nvtx_annotate, DiskCacheMetadata
-from ..log import init_logger
-from ..config import LMCacheEngineConfig
-from ..lookup_server.abstract_server import LookupServerInterface
-
-
-from ..cache_controller.worker import LMCacheWorker
-
-
-from evictor.lru_evictor import LRUEvictor, PutStatus
 import torch
+
+from leetcuda.lmcache.cache_controller.message import KVAdmitMsg, KVEvictMsg
+from leetcuda.lmcache.cache_controller.worker import LMCacheWorker
+from leetcuda.lmcache.config import LMCacheEngineConfig
+from leetcuda.lmcache.log import init_logger
+from leetcuda.lmcache.lookup_server.abstract_server import LookupServerInterface
+from leetcuda.lmcache.memory_management import MemoryAllocatorInterface, MemoryObj
+from leetcuda.lmcache.observability import LMCStatsMonitor
+from leetcuda.lmcache.storage_backend.abstract_backend import StorageBackendInterface
+from leetcuda.lmcache.storage_backend.evictor.base_evictor import PutStatus
+from leetcuda.lmcache.utils import DiskCacheMetadata, CacheEngineKey, _lmcache_nvtx_annotate
+from leetcuda.lmcache.storage_backend.evictor.lru_evictor import LRUEvictor
 
 logger = init_logger(__name__)
 

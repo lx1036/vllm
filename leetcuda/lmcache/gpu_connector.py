@@ -1,9 +1,10 @@
 import abc
-from typing import List
+from typing import List, Optional
 
-from memory_management import MemoryObj, MemoryFormat
-from utils import _lmcache_nvtx_annotate
 import torch
+
+from leetcuda.lmcache.memory_management import MemoryObj, MemoryFormat
+from leetcuda.lmcache.utils import _lmcache_nvtx_annotate
 
 
 class GPUConnectorInterface(metaclass=abc.ABCMeta):

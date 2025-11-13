@@ -2,18 +2,18 @@ import asyncio
 import threading
 from typing import Optional, OrderedDict, List, Dict, Tuple
 
-from abstract_backend import StorageBackendInterface
-from nixl_backend import NixlBackend
+from leetcuda.lmcache.cache_controller.worker import LMCacheWorker
+from leetcuda.lmcache.config import LMCacheEngineMetadata, LMCacheEngineConfig
+from leetcuda.lmcache.lookup_server.abstract_server import LookupServerInterface
+from leetcuda.lmcache.memory_management import MemoryAllocatorInterface, MemoryObj, MemoryObjMetadata
+from leetcuda.lmcache.storage_backend.abstract_backend import StorageBackendInterface
+from leetcuda.lmcache.storage_backend.local_disk_backend import LocalDiskBackend
+from leetcuda.lmcache.storage_backend.remote_backend import RemoteBackend
+from leetcuda.lmcache.log import init_logger
+from leetcuda.lmcache.utils import CacheEngineKey
+
 import torch
 
-from ..log import init_logger
-from ..memory_management import MemoryObj, MemoryAllocatorInterface
-from ..utils import CacheEngineKey
-from ..config import LMCacheEngineConfig, LMCacheEngineMetadata
-from ..lookup_server.abstract_server import LookupServerInterface
-from remote_backend import RemoteBackend
-from local_disk_backend import LocalDiskBackend
-from ..cache_controller.worker import LMCacheWorker
 from concurrent.futures import Future
 
 logger = init_logger(__name__)
@@ -101,10 +101,12 @@ class StorageManager:
 
 
     def get(self, key: CacheEngineKey) -> Optional[MemoryObj]:
+        return None
 
 
 
     def contains(self, key: CacheEngineKey, search_range: Optional[List[str]] = None) -> bool:
+        return False
 
 
     def allocate(self, shape: torch.Size, dtype: torch.dtype, eviction=True) -> Optional[MemoryObj]:
@@ -124,24 +126,6 @@ class StorageManager:
 
 
 
-
-
-class DistributedStorageManager:
-
-    """
-    The storage manager for P-D disaggregation setting.
-
-    """
-
-
-    def __init__(self):
-
-        self.storage_backend: NixlBackend = NixlBackend.CreateNixlBackend(config, metadata)
-
-
-
-    def prepare_put(self, keys: list[CacheEngineKey], metadatas: list[MemoryObjMetadata]) -> None:
-        self.storage_backend.register_put_tasks(keys, metadatas)
 
 
 

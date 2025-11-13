@@ -1,14 +1,18 @@
 import asyncio
 import threading
+from typing import TYPE_CHECKING
 
 import msgspec
 import zmq
 
 from leetcuda.lmcache.cache_controller.message import WorkerMsg
 from leetcuda.lmcache.cache_controller.rpc import get_zmq_socket, get_zmq_context
-from leetcuda.lmcache.cache_engine import LMCacheEngine
 from leetcuda.lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata
 from leetcuda.lmcache.log import init_logger
+
+if TYPE_CHECKING: # fix circular import
+    from leetcuda.lmcache.cache_engine import LMCacheEngine
+
 
 logger = init_logger(__name__)
 
@@ -25,7 +29,7 @@ class LMCacheWorker:
             self,
             config: LMCacheEngineConfig,
             metadata: LMCacheEngineMetadata,
-            lmcache_engine: LMCacheEngine,
+            lmcache_engine: "LMCacheEngine", # fix circular import
     ):
         self.worker_id = metadata.worker_id
         self.lmcache_instance_id = config.lmcache_instance_id

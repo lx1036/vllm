@@ -1,17 +1,17 @@
-from typing import Optional, Dict, List, Union
+from typing import Optional, Dict, List, Union, Tuple
 
 import torch
 
 from leetcuda.lmcache.cache_controller.worker import LMCacheWorker
-from log import init_logger
-from storage_backend.storage_manager import StorageManager, DistributedStorageManager
-from token_database import TokenDatabase, ChunkedTokenDatabase
-from memory_management import MixedMemoryAllocator, MemoryAllocatorInterface
-from config import LMCacheEngineConfig, LMCacheEngineMetadata
-from utils import _lmcache_nvtx_annotate
-from lookup_server.abstract_server import LookupServerInterface
-from gpu_connector import GPUConnectorInterface
-
+from leetcuda.lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata
+from leetcuda.lmcache.gpu_connector import GPUConnectorInterface
+from leetcuda.lmcache.log import init_logger
+from leetcuda.lmcache.lookup_server.abstract_server import LookupServerInterface
+from leetcuda.lmcache.memory_management import MemoryAllocatorInterface, MixedMemoryAllocator
+from leetcuda.lmcache.observability import LMCStatsMonitor, LMCacheStatsLogger
+from leetcuda.lmcache.storage_backend.storage_manager import StorageManager
+from leetcuda.lmcache.token_database import TokenDatabase, ChunkedTokenDatabase
+from leetcuda.lmcache.utils import _lmcache_nvtx_annotate, CacheEngineKey
 
 logger = init_logger(__name__)
 
@@ -66,8 +66,6 @@ class LMCacheEngine:
 
 
 
-    def retrieve(self, tokens: torch.Tensor):
-
 
     def lookup(self, tokens: Union[torch.Tensor, List[int]], search_range: Optional[List[str]] = None) -> int:
         """
@@ -89,12 +87,15 @@ class LMCacheEngine:
 
 
     def close(self) -> None:
+        logger.info("LMCacheEngine closed.")
+
 
 
 class LMCacheEngineBuilder:
     _instances: Dict[str, LMCacheEngine] = {}
     _cfgs: Dict[str, LMCacheEngineConfig] = {}
     _metadatas: Dict[str, LMCacheEngineMetadata] = {}
+    _stat_loggers: Dict[str, LMCacheStatsLogger] = {}
 
 
     @classmethod
@@ -110,10 +111,12 @@ class LMCacheEngineBuilder:
         if instance_id not in cls._instances:
             memory_allocator = cls._Create_memory_allocator(config, metadata)
             token_database = cls._Create_token_database(config, metadata)
-
             engine = LMCacheEngine(config, metadata, memory_allocator, token_database, gpu_connector)
+            stat_logger = LMCacheStatsLogger(metadata, log_interval=10)
             cls._instances[instance_id] = engine
-
+            cls._cfgs[instance_id] = config
+            cls._metadatas[instance_id] = metadata
+            cls._stat_loggers[instance_id] = stat_logger
 
             return engine
 
@@ -139,3 +142,18 @@ class LMCacheEngineBuilder:
     def _Create_token_database(config: LMCacheEngineConfig, metadata: LMCacheEngineMetadata) -> TokenDatabase:
         return ChunkedTokenDatabase(config, metadata)
 
+
+    @classmethod
+    def destroy(cls, instance_id: str) -> None:
+        """Close and delete the LMCacheEngine instance by the instance ID"""
+        # TODO: unit test for this
+        if instance_id in cls._instances:
+            stat_logger = cls._stat_loggers[instance_id]
+            stat_logger.shutdown()
+            engine = cls._instances[instance_id]
+            engine.close()
+            cls._instances.pop(instance_id, None)
+            cls._cfgs.pop(instance_id, None)
+            cls._metadatas.pop(instance_id, None)
+            cls._stat_loggers.pop(instance_id, None)
+            LMCStatsMonitor.DestroyInstance()

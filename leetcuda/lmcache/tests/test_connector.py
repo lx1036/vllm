@@ -16,18 +16,17 @@ import torch
         "lm://localhost:65000",
     ],
 )
-def test_lm_connector(lmserver_experimental_process, url):
+def test_lm_connector(lmserver_experimental_process, url, autorelease_experimental):
     if url.startswith("lm"):
         url = lmserver_experimental_process.server_url # LMCacheServerProcess(server_url='lm://localhost:49436', server_process=<Popen: returncode: 0 args: ['python3', '-m', 'lmcache.experimental.server',...>)
 
     async_loop, async_thread = init_asyncio_loop()
     memory_allocator = PinMemoryAllocator(1024 * 1024 * 1024)
-    connector = CreateConnector(url, async_loop, memory_allocator)
+    connector = autorelease_experimental(CreateConnector(url, async_loop, memory_allocator)) #
 
     random_key = dumb_cache_engine_key()
     future = asyncio.run_coroutine_threadsafe(connector.exists(random_key), async_loop)
     assert not future.result()
-
 
     num_tokens = 1000
     mem_obj_shape = tuple([2, 32, num_tokens, 1024])

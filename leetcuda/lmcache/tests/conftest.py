@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 import pytest
 
+from leetcuda.lmcache.cache_engine import LMCacheEngineBuilder
+
 
 @dataclass
 class LMCacheServerProcess:
@@ -48,9 +50,7 @@ def lmserver_experimental_process(request):
         max_retries -= 1
         port_number = random.randint(10000, 65500)
         print("Starting the lmcache experimental server process on port")
-        proc = subprocess.Popen(
-            shlex.split("python3 -m lmcache.experimental.server localhost "
-                        f"{port_number} {device}"))
+        proc = subprocess.Popen(shlex.split("python3 -m leetcuda.lmcache.server localhost {port_number} {device}"))
 
         # Wait for lmcache process to start
         time.sleep(5)
@@ -78,3 +78,20 @@ def lmserver_experimental_process(request):
     # Destroy remote disk path
     if device not in ["cpu"]:
         subprocess.run(shlex.split(f"rm -rf {device}"))
+
+
+@pytest.fixture(scope="function")
+def autorelease_experimental(request):
+    objects = []
+
+    def _factory(obj):
+        objects.append(obj)
+        return obj
+
+    yield _factory
+
+    LMCacheEngineBuilder.destroy("test")
+
+    # Cleanup all objects created by the factory
+    #for obj in objects:
+    #    obj.close()
