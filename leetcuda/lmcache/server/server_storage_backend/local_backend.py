@@ -1,24 +1,13 @@
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
-from leetcuda.lmcache.memory_management import MemoryFormat
-from leetcuda.lmcache.server.server_storage_backend import LMSBackendInterface
-
-import torch
+from leetcuda.lmcache.protocol import ClientMetaMessage
+from leetcuda.lmcache.server.server_storage_backend.abstract_backend import LMSBackendInterface
 
 
-# TODO(Jiayi): Maybe move the memory management in remote
-# cache server to `memory_management.py` as well.
-@dataclass
-class LMSMemoryObj:
-    data: bytearray
-    length: int
-    fmt: MemoryFormat
-    dtype: Optional[torch.dtype]
-    shape: torch.Size
-
+from leetcuda.lmcache.server.server_storage_backend.utils import LMSMemoryObj
+from leetcuda.lmcache.utils import CacheEngineKey, _lmcache_nvtx_annotate
 
 
 class LocalBackend(LMSBackendInterface):
@@ -27,19 +16,18 @@ class LocalBackend(LMSBackendInterface):
     memory.
     """
 
-    def __init__(self, ):
+    def __init__(self):
         """
         Throws:
             RuntimeError if the loaded configuration does not match the current
             configuration
         """
         super().__init__()
-        self.dict: OrderedDict[str, bytearray] = OrderedDict()
+        self.dict: OrderedDict[CacheEngineKey, LMSMemoryObj] = OrderedDict()
         self.lock = threading.Lock()
 
 
-
-    def put(self, key: str, kv_chunk_bytes: bytearray, blocking: bool = True) -> None:
+    def put(self, client_meta: ClientMetaMessage, kv_chunk_bytes: bytearray) -> None:
         with self.lock:
             self.dict[client_meta.key] = LMSMemoryObj(
                 kv_chunk_bytes,
@@ -49,14 +37,21 @@ class LocalBackend(LMSBackendInterface):
                 client_meta.shape,
             )
 
+    @_lmcache_nvtx_annotate
+    def get(self, key: CacheEngineKey) -> Optional[LMSMemoryObj]:
+        with self.lock:
+            return self.dict.get(key, None)
+
+    def contains(self, key: CacheEngineKey) -> bool:
+        with self.lock:
+            return key in self.dict
 
 
+    def list_keys(self) -> List[CacheEngineKey]:
+        with self.lock:
+            return list(self.dict.keys())
 
-# TODO(Jiayi): need to optimize disk loading
-# current impl. with "naive open read/write" might not be efficient
-# (better than torch.load)
-class LocalDiskBackend(LMSBackendInterface):
-
-
+    def close(self):
+        pass
 
 

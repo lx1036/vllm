@@ -22,9 +22,10 @@ def test_lm_connector(lmserver_experimental_process, url, autorelease_experiment
 
     async_loop, async_thread = init_asyncio_loop()
     memory_allocator = PinMemoryAllocator(1024 * 1024 * 1024)
-    connector = autorelease_experimental(CreateConnector(url, async_loop, memory_allocator)) #
+    connector = autorelease_experimental(CreateConnector(url, async_loop, memory_allocator))
+    # connector = CreateConnector(url, async_loop, memory_allocator) # 手动运行
 
-    random_key = dumb_cache_engine_key()
+    random_key = dumb_cache_engine_key() # CacheEngineKey(fmt='vllm', model_name='test_model', world_size=3, worker_id=123, chunk_hash='hash')
     future = asyncio.run_coroutine_threadsafe(connector.exists(random_key), async_loop)
     assert not future.result()
 

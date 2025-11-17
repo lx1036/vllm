@@ -1,4 +1,5 @@
 import abc
+import ctypes
 import threading
 from dataclasses import dataclass
 from enum import Enum
@@ -115,7 +116,8 @@ class MemoryObj(metaclass=abc.ABCMeta):
 
 @dataclass
 class FreeBlock:
-    """Metadata class used by the memory allocators
+    """
+    Metadata class used by the memory allocators
     """
     start: int
     size: int
@@ -133,6 +135,54 @@ class TensorMemoryObj(MemoryObj):
         self.raw_data = raw_data
         self.meta = metadata
         self.valid = True
+
+    @property
+    def metadata(self) -> MemoryObjMetadata:
+        return self.meta
+
+    @property
+    def tensor(self) -> Optional[torch.Tensor]:
+        if not self.valid:
+            logger.warning("Trying to access an invalidated MemoryObj")
+            return None
+        assert self.metadata.dtype is not None
+        return self.raw_data.view(self.metadata.dtype).view(self.metadata.shape) # tensor 重塑：view() 类似 NumPy 的 reshape()，调整张量的维度和尺寸
+
+    @property
+    def byte_array(self) -> bytes:
+        kv_chunk = self.tensor
+        assert kv_chunk is not None
+        num_bytes = kv_chunk.numel() * kv_chunk.element_size()
+        ptr = kv_chunk.data_ptr()
+        ubyte_ptr = ctypes.cast(ptr, ctypes.POINTER(ctypes.c_ubyte))
+        byte_array = (ctypes.c_ubyte * num_bytes).from_address(ctypes.addressof(ubyte_ptr.contents))
+        return memoryview(byte_array)
+
+    def invalidate(self):
+        self.valid = False
+
+    def is_valid(self):
+        return self.valid
+
+    def get_size(self) -> int:
+        num_elements = self.raw_data.numel()
+        element_size = self.raw_data.element_size()
+        return num_elements * element_size
+
+    def get_shape(self) -> torch.Size:
+        return self.metadata.shape
+
+    def get_dtype(self) -> torch.dtype:
+        assert self.metadata.dtype is not None
+        return self.metadata.dtype
+
+    def get_memory_format(self) -> MemoryFormat:
+        return self.metadata.fmt
+
+    def get_physical_size(self) -> int:
+        return self.metadata.phy_size
+
+
 
 
 class MemoryAllocatorInterface(metaclass=abc.ABCMeta):
@@ -181,13 +231,16 @@ class MemoryAllocatorInterface(metaclass=abc.ABCMeta):
 
 
 class TensorMemoryAllocator(MemoryAllocatorInterface):
-
+    """
+    Implements a "explicit list" memory allocator.
+    """
+    ALIGN_BYTES = 512
 
     def __init__(self, tensor: torch.Tensor):
         self.buffer = tensor.view(torch.uint8).flatten()
 
         self.explicit_list = sortedcontainers.SortedList(key=lambda x: x.start)
-        self.explicit_list.add(FreeBlock(start=0, size=self.buffer.numel()))
+        self.explicit_list.add(FreeBlock(start=0, size=self.buffer.numel())) # self.buffer 是总大小，比如 1024*1024*1024=1GiB
 
         # For debugging purposes
         self.num_active_allocations = 0
@@ -195,13 +248,15 @@ class TensorMemoryAllocator(MemoryAllocatorInterface):
 
         self.stats_monitor = LMCStatsMonitor.GetOrCreate()
 
-
-
     def allocate(self, shape: Union[torch.Size, Tuple[int, ...]], dtype: Optional[torch.dtype], fmt: MemoryFormat = MemoryFormat.KV_BLOB) -> Optional[TensorMemoryObj]:
+        if not isinstance(shape, torch.Size):
+            shape = torch.Size(shape)
+
+        assert dtype is not None, "dtype must be specified"
 
         # Calculate the size of the tensor
         raw_size = TensorMemoryAllocator._Compute_raw_size(shape, dtype)
-        aligned_size = TensorMemoryAllocator._Compute_aligned_size(raw_size)
+        aligned_size = TensorMemoryAllocator._Compute_aligned_size(raw_size) # 1024*1024*1=1MiB
 
         # Find the first block that fits the shape
         for block in self.explicit_list:
@@ -215,6 +270,7 @@ class TensorMemoryAllocator(MemoryAllocatorInterface):
         self.explicit_list.remove(block)
         # Update the explicit list
         if block.size > aligned_size:
+            # [1MiB, 1GiB], size=1Gib-1MiB
             self.explicit_list.add(FreeBlock(start=block.start + aligned_size, size=block.size - aligned_size))
 
         # Update debug status
@@ -223,7 +279,19 @@ class TensorMemoryAllocator(MemoryAllocatorInterface):
         self.stats_monitor.update_local_cache_usage(self.total_allocated_size)
 
         # Allocate the block
-        return TensorMemoryObj(raw_data=self.buffer[block.start:block.start + raw_size], metadata=MemoryObjMetadata(shape, dtype, block.start, aligned_size, 1, fmt))
+        return TensorMemoryObj(
+            raw_data=self.buffer[block.start: block.start + raw_size],
+            metadata=MemoryObjMetadata(shape, dtype, block.start, aligned_size, 1, fmt),
+        )
+
+    @staticmethod
+    def _Compute_raw_size(shape: torch.Size, dtype: torch.dtype) -> int:
+        return shape.numel() * dtype.itemsize
+
+    @staticmethod
+    def _Compute_aligned_size(raw_size: int) -> int:
+        align = TensorMemoryAllocator.ALIGN_BYTES
+        return (raw_size + align - 1) & ~(align - 1)
 
     def ref_count_up(self, memory_obj: MemoryObj):
         memory_obj.metadata.ref_count += 1

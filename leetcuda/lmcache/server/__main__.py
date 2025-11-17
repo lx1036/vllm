@@ -1,8 +1,12 @@
 import socket
 import threading
+import time
 
+from leetcuda.lmcache.protocol import ClientMetaMessage, Constants, ServerMetaMessage
 from leetcuda.lmcache.server.server_storage_backend import CreateStorageBackend
+from leetcuda.lmcache.memory_management import MemoryFormat
 
+import torch
 
 class LMCacheServer:
 
@@ -11,7 +15,7 @@ class LMCacheServer:
         self.port = port
         # self.data_store = {}
         self.data_store = CreateStorageBackend(device)
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.bind((host, port))
         self.server_socket.listen()
 
@@ -26,13 +30,51 @@ class LMCacheServer:
         finally:
             self.server_socket.close()
 
+    def receive_all(self, client_socket: socket.socket, n: int):
+        data = bytearray()
+        while len(data) < n:
+            packet = client_socket.recv(n - len(data))
+            if not packet:
+                return None
+            data.extend(packet)
+        return data
 
-    def handle_client(self, client_socket):
+    def handle_client(self, client_socket: socket.socket):
+        try:
+            while True:
+                header = self.receive_all(client_socket, ClientMetaMessage.packlength())
+                if not header:
+                    break
+                meta = ClientMetaMessage.deserialize(header)
+                match meta.command:
 
+                    case Constants.CLIENT_PUT:
+                        t0 = time.perf_counter()
+                        s = self.receive_all(client_socket, meta.length)
+                        t1 = time.perf_counter()
+                        self.data_store.put(meta, s)
+                        t2 = time.perf_counter()
+                        print(f"Time to receive data: {t1 - t0}, time to store data: {t2 - t1}")
 
+                    case Constants.CLIENT_GET:
+                        t0 = time.perf_counter()
+                        lms_memory_obj = self.data_store.get(meta.key)
+                        t1 = time.perf_counter()
+                        if lms_memory_obj is not None:
+                            client_socket.sendall(ServerMetaMessage(Constants.SERVER_SUCCESS, lms_memory_obj.length, lms_memory_obj.fmt, lms_memory_obj.dtype, lms_memory_obj.shape).serialize())
+                            t2 = time.perf_counter()
+                            client_socket.sendall(lms_memory_obj.data)
+                            t3 = time.perf_counter()
+                            print(f"Time to get data: {t1 - t0}, time to send meta: {t2 - t1}, time to send data: {t3 - t2}")
+                        else:
+                            client_socket.sendall(ServerMetaMessage(Constants.SERVER_FAIL, 0, MemoryFormat(1), torch.float16, torch.Size((0, 0, 0, 0))).serialize())
 
+                    case Constants.CLIENT_EXIST:
+                        code = Constants.SERVER_SUCCESS if meta.key in self.data_store.list_keys() else Constants.SERVER_FAIL
+                        client_socket.sendall(ServerMetaMessage(code, 0, MemoryFormat(1), torch.float16, torch.Size((0, 0, 0, 0))).serialize())
 
-
+        finally:
+            client_socket.close()
 
 def main():
     import sys

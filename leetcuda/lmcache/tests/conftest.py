@@ -50,7 +50,7 @@ def lmserver_experimental_process(request):
         max_retries -= 1
         port_number = random.randint(10000, 65500)
         print("Starting the lmcache experimental server process on port")
-        proc = subprocess.Popen(shlex.split("python3 -m leetcuda.lmcache.server localhost {port_number} {device}"))
+        proc = subprocess.Popen(shlex.split(f"python3 -m leetcuda.lmcache.server localhost {port_number} {device}"))
 
         # Wait for lmcache process to start
         time.sleep(5)

@@ -1,6 +1,6 @@
 from leetcuda.lmcache.server.server_storage_backend.abstract_backend import LMSBackendInterface
 from leetcuda.lmcache.log import init_logger
-from leetcuda.lmcache.server.server_storage_backend.local_backend import LocalBackend, LocalDiskBackend
+from leetcuda.lmcache.server.server_storage_backend.local_backend import LocalBackend
 
 logger = init_logger(__name__)
 
@@ -13,9 +13,10 @@ def CreateStorageBackend(device: str) -> LMSBackendInterface:
             return LocalBackend()
 
         case _:
+            raise ValueError(f"Unsupported device: {device}")
             # cpu only
-            logger.info("Initializing disk-only cache server")
-            return LocalDiskBackend(path=device)
+            # logger.info("Initializing disk-only cache server")
+            # return LocalDiskBackend(path=device)
 
 
 

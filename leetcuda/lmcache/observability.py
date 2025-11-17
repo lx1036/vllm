@@ -257,6 +257,10 @@ class LMCStatsMonitor:
 
 
     @thread_safe
+    def update_local_cache_usage(self, usage: int):
+        self.local_cache_usage_bytes = usage
+
+    @thread_safe
     def update_local_storage_usage(self, usage: int):
         self.local_storage_usage_bytes = usage
 

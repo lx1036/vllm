@@ -58,6 +58,11 @@ class ClientMetaMessage:
     dtype: Optional[torch.dtype]
     shape: torch.Size
 
+    @staticmethod
+    def packlength() -> int:
+        # NOTE: 8 is the number of integers
+        return 4 * 8 + MAX_KEY_LENGTH
+
     def serialize(self) -> bytes:
         key_str = self.key.to_string()
         assert len(key_str) <= MAX_KEY_LENGTH, f"Key length {len(key_str)} exceeds maximum {MAX_KEY_LENGTH}"
@@ -81,6 +86,14 @@ class ClientMetaMessage:
 
         return packed_bytes
 
+    @staticmethod
+    def deserialize(s: bytes) -> "ClientMetaMessage":
+        command, length, fmt, dtype, shape0, shape1, shape2, shape3, key = struct.unpack(f"iiiiiiii{MAX_KEY_LENGTH}s", s)
+        return ClientMetaMessage(command, CacheEngineKey.from_string(key.decode().strip()), length, MemoryFormat(fmt), INT_TO_DTYPE[dtype], torch.Size([shape0, shape1, shape2, shape3]))
+
+
+
+
 
 @dataclass
 class ServerMetaMessage:
@@ -97,6 +110,22 @@ class ServerMetaMessage:
     @staticmethod
     def packlength() -> int:
         return 4 * 8
+
+    def serialize(self) -> bytes:
+        assert (len(self.shape) == 4), "Shape dimension should be 4"
+        packed_bytes = struct.pack(
+            "iiiiiiii",
+            self.code,
+            self.length,
+            int(self.fmt.value),
+            DTYPE_TO_INT[self.dtype],
+            self.shape[0],
+            self.shape[1],
+            self.shape[2],
+            self.shape[3],
+        )
+        return packed_bytes
+
 
     @staticmethod
     def deserialize(s: bytes) -> "ServerMetaMessage":

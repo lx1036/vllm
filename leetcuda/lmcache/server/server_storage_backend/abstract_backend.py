@@ -3,68 +3,56 @@ from typing import Optional, List
 
 import torch
 
+from leetcuda.lmcache.protocol import ClientMetaMessage
+from leetcuda.lmcache.server.server_storage_backend.utils import LMSMemoryObj
+from leetcuda.lmcache.utils import CacheEngineKey
+
+
 class LMSBackendInterface(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
-    def put(
-            self,
-            key: str,
-            kv_chunk_bytes: bytearray,
-            blocking=True,
-    ) -> None:
+    def put(self, client_meta: ClientMetaMessage, kv_chunk_bytes: bytearray) -> None:
         """
         Store the KV cache of the tokens into the cache server.
 
         Args:
-            key: the key of the token chunk, in the format of str
-            kv_chunk: the kv cache (bytearray) of the token chunk,
-            in the format of a big tensor
-            blocking: whether to block the call before the operation is
-            completed
+            key: the key of the token chunk, in the format of CacheEngineKey
+            client_meta: metadata sent by the client
+            kv_chunk_bytes: the kv cache (bytearray) of the token chunk
 
         Returns:
             None
-
-        Note:
-            The KV cache should NOT have the "batch" dimension.
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def contains(
-            self,
-            key: str,
-    ) -> bool:
+    def contains(self, key: CacheEngineKey) -> bool:
         """
         Query if a key is in the cache or not
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def get(self, key: str) -> Optional[torch.Tensor]:
+    def get(self, key: CacheEngineKey) -> Optional[LMSMemoryObj]:
         """
-        Retrieve the KV cache chunk by the given key
+        Retrieve LMSMemoryObj by the given key
 
         Input:
-            key: the key of the token chunk, including prefix hash and format
+            key: the CacheEngineKey
 
         Output:
-            the kv cache of the token chunk, in the format of a big tensor
-            None if the key is not found
+            An LMSMemoryObj object that contains the KV cache bytearray
+            with the some metadata
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def list_keys(self, ) -> List[str]:
+    def list_keys(self, ) -> List[CacheEngineKey]:
         """
-        Retrieve the KV cache chunk by the given key
-
-        Input:
-            key: the key of the token chunk, including prefix hash and format
+        List all keys in the cache server
 
         Output:
-            the kv cache of the token chunk, in the format of a big tensor
-            None if the key is not found
+            All keys in the cache server
         """
         raise NotImplementedError
 
@@ -75,6 +63,4 @@ class LMSBackendInterface(metaclass=abc.ABCMeta):
         Children classes should override this method if necessary
         """
         pass
-
-
 
