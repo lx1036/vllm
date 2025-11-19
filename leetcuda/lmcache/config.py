@@ -6,12 +6,9 @@ import torch
 
 @dataclass
 class LMCacheEngineConfig:
-
-
     chunk_size: int
-
-    max_local_cpu_size: float  # in GB
     local_cpu: bool
+    max_local_cpu_size: float  # in GB
 
     # need to be assigned a non-zero
     # value even if local_cpu is disabled
@@ -21,6 +18,21 @@ class LMCacheEngineConfig:
     remote_url: Optional[str]
     remote_serde: Optional[str]  # Can be "naive" or "cachegen"
 
+    save_decode_cache: bool  # whether to store decode kv cache
+
+    # Blending related configurations
+    enable_blending: bool  # whether to enable blending
+    blend_recompute_ratio: float  # the ratio of blending recompute
+    blend_min_tokens: int  # the minimum number of tokens for blending
+    blend_special_str: str = " # # "  # the separator for blending
+
+    # P2P related configurations
+    enable_p2p: bool = False  # whether to enable peer-to-peer sharing
+    lookup_url: Optional[str] = None  # the url of the lookup server
+    distributed_url: Optional[str] = None  # the url of the distributed server
+
+    # Error handling related configurations
+    error_handling: bool = False  # whether to enable error handling
 
     # Controller related configurations
     enable_controller: Optional[bool] = False  # whether to enable controller
@@ -28,11 +40,9 @@ class LMCacheEngineConfig:
     lmcache_instance_id: str = "lmcache_default_instance"
     # controller url
     controller_url: Optional[str] = None
-
-    # P2P related configurations
-    enable_p2p: bool = False  # whether to enable peer-to-peer sharing
-    lookup_url: Optional[str] = None  # the url of the lookup server
-    distributed_url: Optional[str] = None  # the url of the distributed server
+    # lmcache worker url
+    # NOTE: port number will add `worker_id`
+    lmcache_worker_url: Optional[str] = None
 
     # (Optional) Nixl configurations
     # whether to enable Nixl
@@ -140,6 +150,70 @@ class LMCacheEngineConfig:
             nixl_enable_gc,
         ).validate()
 
+    @staticmethod
+    def from_legacy(
+            chunk_size: int = 256,
+            backend: str = "cpu",
+            remote_url: Optional[str] = "lm://localhost:65432",
+            remote_serde: str = "naive",
+            save_decode_cache: bool = False,
+            enable_blending: bool = False,
+            blend_recompute_ratio: float = 0.15,
+            blend_min_tokens: int = 256,
+            blend_special_str: str = " # # ",
+            max_local_disk_size: float = 0.0,
+            enable_p2p: bool = False,
+            lookup_url: Optional[str] = None,
+            distributed_url: Optional[str] = None,
+            error_handling: bool = False,
+    ) -> "LMCacheEngineConfig":
+        # TODO (ApostaC): Add nixl config
+        if backend == "cpu":
+            local_cpu = True
+            max_local_cpu_size = 5
+            local_disk = None
+            max_local_disk_size = 0
+            remote_url = None
+        elif backend == "local_disk":
+            local_cpu = False
+            max_local_cpu_size = 5
+            local_disk = "/local/disk_test/local_disk/"
+            max_local_disk_size = 5
+            remote_url = None
+        elif backend == "local_cpu_disk":
+            local_cpu = True
+            max_local_cpu_size = 5
+            local_disk = "/local/disk_test/local_disk/"
+            max_local_disk_size = 5
+            remote_url = None
+        elif backend == "remote":
+            local_cpu = False
+            max_local_cpu_size = 5
+            local_disk = None
+        elif backend == "local_cpu_remote":
+            local_cpu = True
+            max_local_cpu_size = 5
+            local_disk = None
+        elif backend == "local_disk_remote":
+            local_cpu = False
+            max_local_cpu_size = 5
+            local_disk = "/local/disk_test/local_disk/"
+            max_local_disk_size = 5
+        elif backend == "local_cpu_disk_remote":
+            local_cpu = True
+            max_local_cpu_size = 5
+            local_disk = "/local/disk_test/local_disk/"
+            max_local_disk_size = 5
+        else:
+            raise ValueError(f"Invalid backend: {backend}")
+        return LMCacheEngineConfig(chunk_size, local_cpu, max_local_cpu_size,
+                                   local_disk, max_local_disk_size, remote_url,
+                                   remote_serde, save_decode_cache,
+                                   enable_blending, blend_recompute_ratio,
+                                   blend_min_tokens, blend_special_str,
+                                   enable_p2p, lookup_url, distributed_url,
+                                   error_handling).validate()
+
     def validate(self) -> 'LMCacheEngineConfig':
         """Validate the config
         """
@@ -154,22 +228,12 @@ class LMCacheEngineConfig:
             assert self.nixl_buffer_size is not None
             assert self.nixl_buffer_device is not None
             assert self.nixl_enable_gc is not None
-
-            assert self.local_cpu is False, \
-                "Nixl only supports local_cpu=False"
-            assert self.max_local_cpu_size == 0, \
-                "Nixl only supports max_local_cpu_size=0"
-
-            assert self.local_disk is None, \
-                "Nixl only supports local_disk=None"
-
-            assert self.remote_url is None, \
-                "Nixl only supports remote_url=None"
-
-            assert self.save_decode_cache is False, \
-                "Nixl only supports save_decode_cache=False"
-            assert self.enable_p2p is False, \
-                "Nixl only supports enable_p2p=False"
+            assert self.local_cpu is False, "Nixl only supports local_cpu=False"
+            assert self.max_local_cpu_size == 0, "Nixl only supports max_local_cpu_size=0"
+            assert self.local_disk is None, "Nixl only supports local_disk=None"
+            assert self.remote_url is None, "Nixl only supports remote_url=None"
+            assert self.save_decode_cache is False, "Nixl only supports save_decode_cache=False"
+            assert self.enable_p2p is False, "Nixl only supports enable_p2p=False"
 
         return self
 
@@ -188,5 +252,12 @@ class LMCacheEngineMetadata:
     kv_dtype: torch.dtype
     """ the shape of kv tensors """
     """ (num_layer, 2, chunk_size, num_kv_head, head_size) """
+    """
+    num_layer: 模型层数
+    2: k 和 v
+    chunk_size: 当输入文本超过模型最大上下文长度（或为了优化计算效率）时，会将文本分块处理，chunk_size即每个块的 token 数量。常见于滑动窗口注意力、长上下文扩展等场景。
+    num_kv_head: k 和 v 注意力头数量，即多少个 heads
+    head_size: 每个注意力头的维度（即每个头中 Q/K/V 向量的长度）。模型的总隐藏维度（hidden_dim）通常等于 num_q_head × head_size（或 num_kv_head × head_size，取决于注意力机制）。
+    """
     kv_shape: tuple[int, int, int, int, int]
 

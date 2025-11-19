@@ -109,8 +109,8 @@ class LMCacheEngineBuilder:
     ) -> LMCacheEngine:
         logger.info(f"Creating LMCacheEngine instance {instance_id}")
         if instance_id not in cls._instances:
-            memory_allocator = cls._Create_memory_allocator(config, metadata)
-            token_database = cls._Create_token_database(config, metadata)
+            memory_allocator = cls.create_memory_allocator(config, metadata)
+            token_database = cls.create_token_database(config, metadata)
             engine = LMCacheEngine(config, metadata, memory_allocator, token_database, gpu_connector)
             stat_logger = LMCacheStatsLogger(metadata, log_interval=10)
             cls._instances[instance_id] = engine
@@ -133,13 +133,13 @@ class LMCacheEngineBuilder:
 
 
     @staticmethod
-    def _Create_memory_allocator(config: LMCacheEngineConfig, metadata: LMCacheEngineMetadata) -> MemoryAllocatorInterface:
+    def create_memory_allocator(config: LMCacheEngineConfig, metadata: LMCacheEngineMetadata) -> MemoryAllocatorInterface:
         max_local_cpu_size = config.max_local_cpu_size
         return MixedMemoryAllocator(int(max_local_cpu_size * 1024**3))
 
 
     @staticmethod
-    def _Create_token_database(config: LMCacheEngineConfig, metadata: LMCacheEngineMetadata) -> TokenDatabase:
+    def create_token_database(config: LMCacheEngineConfig, metadata: LMCacheEngineMetadata) -> TokenDatabase:
         return ChunkedTokenDatabase(config, metadata)
 
 

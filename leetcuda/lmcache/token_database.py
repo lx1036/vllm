@@ -24,36 +24,34 @@ class TokenDatabase(metaclass=abc.ABCMeta):
             mask: Optional[torch.Tensor] = None,
             make_key: bool = True,
     ) -> Iterable[Tuple[int, int, Union[CacheEngineKey, str]]]:
-
         raise NotImplementedError
 
 
 class ChunkedTokenDatabase(TokenDatabase):
-
     def __init__(self, config: Optional[LMCacheEngineConfig] = None, metadata: Optional[LMCacheEngineMetadata] = None):
         if config is not None:
-            self.chunk_size = config.chunk_size
+            self.chunk_size = config.chunk_size # 256
         self.metadata = metadata
 
     def process_tokens(
-            self, tokens: Union[torch.Tensor, List[int]],
-            mask: Optional[torch.Tensor] = None,
-            make_key: bool = True,
+        self, tokens: Union[torch.Tensor, List[int]],
+        mask: Optional[torch.Tensor] = None,
+        make_key: bool = True,
     ) -> Iterable[Tuple[int, int, Union[CacheEngineKey, str]]]:
         """
         Process the tokens and return the corresponding cache engine keys.
-
-        :param tokens:
-        :param mask:
-        :param make_key:
-        :return:
         """
 
+        if mask is not None:
+            num_falses = mask.numel() - mask.long().sum().item()
+        else:
+            num_falses = 0
+        if num_falses % self.chunk_size != 0:
+            raise ValueError("The number of Falses in the mask is not a multiple of the chunk size.")
 
-        token_chunks = self._chunk_tokens(tokens)
-        prefix_hashes = self._prefix_hash(token_chunks)
-
-
+        total_len = len(tokens)
+        token_chunks = self.chunk_tokens(tokens)
+        prefix_hashes = self.prefix_hash(token_chunks)
         start_idx = 0
         for chunk_id, hash_val in enumerate(prefix_hashes):
             start_idx = chunk_id * self.chunk_size
@@ -62,13 +60,11 @@ class ChunkedTokenDatabase(TokenDatabase):
                 continue
             else:
                 if make_key:
-                    yield start_idx, end_idx, self._make_key_by_hash(hash_val)
+                    yield start_idx, end_idx, self.make_key_by_hash(hash_val)
                 else:
                     yield start_idx, end_idx, hash_val
 
-
-
-    def _chunk_tokens(self, tokens: Union[torch.Tensor, List[int]]) -> Iterable[Union[torch.Tensor, List[int]]]:
+    def chunk_tokens(self, tokens: Union[torch.Tensor, List[int]]) -> Iterable[Union[torch.Tensor, List[int]]]:
         """
         Chunk the tokens into chunks of size self.chunk_size.
 
@@ -78,17 +74,20 @@ class ChunkedTokenDatabase(TokenDatabase):
         for i in range(0, len(tokens), self.chunk_size):
             yield tokens[i: i+self.chunk_size]
 
-
-    def _prefix_hash(self, token_chunks: Iterable[Union[torch.Tensor, List[int]]]) -> Iterable[str]:
-        prefix_hash = self._get_init_hash()
+    def prefix_hash(self, token_chunks: Iterable[Union[torch.Tensor, List[int]]]) -> Iterable[str]:
+        prefix_hash = self.get_init_hash()
         for token_chunk in token_chunks:
-            prefix_hash = self._hash(token_chunk, prefix_hash)
+            prefix_hash = self.hash(token_chunk, prefix_hash)
             yield prefix_hash
 
-    def _get_init_hash(self) -> str:
+    def make_key_by_hash(self, chunk_hash: str):
+        assert self.metadata is not None
+        return CacheEngineKey(self.metadata.fmt, self.metadata.model_name, self.metadata.world_size, self.metadata.worker_id, chunk_hash)
+
+    def get_init_hash(self) -> str:
         return ""
 
-    def _hash(self, tokens: Union[torch.Tensor, List[int]], prefix_hash: str) -> str:
+    def hash(self, tokens: Union[torch.Tensor, List[int]], prefix_hash: str) -> str:
         # TODO: change it to a more efficient hash function
         tokens_bytes: bytes = bytes()
         if isinstance(tokens, torch.Tensor):

@@ -37,13 +37,17 @@ class LocalDiskBackend(StorageBackendInterface):
             lmcache_worker: Optional[LMCacheWorker] = None,
             lookup_server: Optional[LookupServerInterface] = None,
     ):
+        if torch.cuda.is_available():
+            super().__init__(dst_device)
+        else:
+            super().__init__("cpu")
+
+
         self.loop = loop
         self.lmcache_worker = lmcache_worker
         self.instance_id = config.lmcache_instance_id
         self.memory_allocator = memory_allocator
         self.lookup_server = lookup_server
-
-
 
 
         self.disk_lock = threading.Lock()

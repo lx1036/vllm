@@ -18,7 +18,7 @@ from concurrent.futures import Future
 
 logger = init_logger(__name__)
 
-def CreateStorageBackends(
+def CreateStorageBackend(
         config: LMCacheEngineConfig,
         metadata: LMCacheEngineMetadata,
         loop: asyncio.AbstractEventLoop,
@@ -72,7 +72,7 @@ class StorageManager:
         self.put_tasks: Dict[str, Dict[CacheEngineKey, Tuple[Future, MemoryObj]]] = {}
         #TODO: remove hardcode
         dst_device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.storage_backends: OrderedDict[str, StorageBackendInterface] = CreateStorageBackends(config, metadata, self.loop, allocator, dst_device, lmcache_worker, lookup_server)
+        self.storage_backends: OrderedDict[str, StorageBackendInterface] = CreateStorageBackend(config, metadata, self.loop, allocator, dst_device, lmcache_worker, lookup_server)
         for backend_name in self.storage_backends.keys():
             self.put_tasks[backend_name] = {}
 
