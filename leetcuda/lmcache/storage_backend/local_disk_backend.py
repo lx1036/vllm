@@ -32,48 +32,51 @@ class LocalDiskBackend(StorageBackendInterface):
             self,
             config: LMCacheEngineConfig,
             loop: asyncio.AbstractEventLoop,
-            memory_allocator: MemoryAllocatorInterface,
+            local_cpu_backend: LocalCPUBackend,
             dst_device: str = "cuda",
-            lmcache_worker: Optional[LMCacheWorker] = None,
-            lookup_server: Optional[LookupServerInterface] = None,
+            lmcache_worker: Optional["LMCacheWorker"] = None,
     ):
         if torch.cuda.is_available():
             super().__init__(dst_device)
         else:
             super().__init__("cpu")
 
-
-        self.loop = loop
-        self.lmcache_worker = lmcache_worker
-        self.instance_id = config.lmcache_instance_id
-        self.memory_allocator = memory_allocator
-        self.lookup_server = lookup_server
-
-
+        self.cache_policy = get_cache_policy(config.cache_policy)
+        self.dict = self.cache_policy.init_mutable_mapping()
+        self.dst_device = dst_device
+        self.local_cpu_backend = local_cpu_backend
         self.disk_lock = threading.Lock()
-        self.dict: OrderedDict[CacheEngineKey, DiskCacheMetadata] = OrderedDict()
-
         assert config.local_disk is not None
         self.path: str = config.local_disk
         if not os.path.exists(self.path):
             os.makedirs(self.path)
             logger.info(f"Created local disk cache directory: {self.path}")
+        self.loop = loop
+        self.use_local_cpu = config.local_cpu
+        # Block size (for file system I/O)
+        stat = os.statvfs(self.path)
+        self.os_disk_bs = stat.f_bsize
+        self.use_odirect = False
+        if config.extra_config is not None:
+            self.use_odirect = config.extra_config.get("use_odirect", False)
+        logger.info("Using O_DIRECT for disk I/O: %s", self.use_odirect)
 
-        # Initialize the evictor
-        self.evictor = LRUEvictor(max_cache_size=config.max_local_disk_size)
-
-        self.put_tasks: List[CacheEngineKey] = []
-
-        self.usage = 0
+        self.disk_worker = LocalDiskWorker(loop)
+        # TODO(Jiayi): We need a disk space allocator to avoid fragmentation
+        # and hide the following details away from the backend.
+        self.max_cache_size = int(config.max_local_disk_size * 1024**3)
+        self.current_cache_size = 0.0
+        # to help maintain suffix -> prefix order in the dict
+        # assumption: only one request is looked up at a time
+        # (only one worker per cache engine)
+        self.keys_in_request: List[CacheEngineKey] = []
+        self.lmcache_worker = lmcache_worker
+        self.instance_id = config.lmcache_instance_id
         self.stats_monitor = LMCStatsMonitor.GetOrCreate()
+        self.usage = 0
 
-
-
-
-
-
-
-
+    def __str__(self):
+        return "LocalDiskBackend"
 
 
     def submit_put_task(self, key: CacheEngineKey, memory_obj: MemoryObj) -> Optional[Future]:
@@ -161,5 +164,18 @@ class LocalDiskBackend(StorageBackendInterface):
         # push kv evict msg
         if self.lmcache_worker is not None:
             self.lmcache_worker.put_msg(KVEvictMsg(self.instance_id, key.worker_id, key.chunk_hash, "disk"))
+
+
+
+# TODO(Jiayi): handle cases where cache is repetitvely prefetched.
+class LocalDiskWorker:
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.loop = loop
+        self.executor = AsyncPQThreadPoolExecutor(loop, max_workers=4)
+
+
+
+
+
 
 
