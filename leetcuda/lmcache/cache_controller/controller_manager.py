@@ -1,8 +1,15 @@
+import asyncio
+import json
+from typing import Optional
+
+import msgspec
+
 from leetcuda.lmcache.cache_controller.controllers.kv_controller import KVController
 from leetcuda.lmcache.cache_controller.controllers.registration_controller import RegistrationController
 from leetcuda.lmcache.cache_controller.executor import LMCacheClusterExecutor
 from leetcuda.lmcache.cache_controller.message import LookupMsg, HealthMsg, QueryInstMsg, ClearMsg, PinMsg, CompressMsg, \
-    DecompressMsg, MoveMsg, CheckFinishMsg
+    DecompressMsg, MoveMsg, CheckFinishMsg, OrchRetMsg, OrchMsg, ErrorMsg, WorkerReqMsg, Msg, MsgBase, WorkerReqRetMsg, \
+    BatchedP2PLookupMsg, WorkerMsg, KVAdmitMsg, KVEvictMsg, HeartbeatMsg, RegisterMsg, DeRegisterMsg
 from leetcuda.lmcache.log import init_logger
 from leetcuda.lmcache.rpc_utils import get_zmq_context, get_zmq_socket
 
@@ -51,7 +58,79 @@ class LMCacheControllerManager:
         self.kv_controller.post_init(reg_controller=self.reg_controller, cluster_executor=self.cluster_executor)
         self.reg_controller.post_init(kv_controller=self.kv_controller, cluster_executor=self.cluster_executor)
 
+    async def start_all(self):
+        tasks = []
+        if self.controller_urls["reply"] is not None:
+            tasks.append(self.handle_batched_req_request(self.controller_rep_socket))
 
+        tasks.append(self.handle_batched_push_request(self.controller_pull_socket))
+
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def handle_batched_req_request(self, socket) -> Optional[MsgBase]:
+        while True:
+            try:
+                response = await socket.recv()
+                # Parse message based on format
+                if response.startswith(b"{"):
+                    # JSON format - typically from external systems like Mooncake
+                    msg_dict = json.loads(response)
+                    msg = msgspec.convert(msg_dict, type=Msg)
+                else:
+                    # MessagePack format - internal LMCache communication
+                    msg = msgspec.msgpack.decode(response, type=Msg) # bytes => Msg
+
+                if isinstance(msg, WorkerReqMsg):
+                    ret_msg = await self.handle_worker_req_message(msg)
+                    await socket.send(msgspec.msgpack.encode(ret_msg))
+                else:
+                    logger.error(f"Unknown message type: {type(msg)}")
+                    err_msg = ErrorMsg(error=f"Unknown message type: {type(msg)}")
+                    await socket.send(msgspec.msgpack.encode(err_msg))
+            except Exception as e:
+                logger.error(f"Controller Manager error: {e}")
+
+    async def handle_worker_req_message(self, msg: WorkerReqMsg) -> WorkerReqRetMsg:
+        if isinstance(msg, BatchedP2PLookupMsg):
+            ret_msg = await self.kv_controller.batched_p2p_lookup(msg)
+        return ret_msg
+
+    async def handle_batched_push_request(self, socket) -> Optional[MsgBase]:
+        while True:
+            try:
+                responses = await socket.recv_multipart() # socket.recv()
+                for response in responses:
+                    # Parse message based on format
+                    if response.startswith(b"{"):
+                        # JSON format - typically from external systems like Mooncake
+                        msg_dict = json.loads(response)
+                        msg = msgspec.convert(msg_dict, type=Msg)
+                    else:
+                        # MessagePack format - internal LMCache communication
+                        msg = msgspec.msgpack.decode(response, type=Msg)
+
+                    if isinstance(msg, WorkerMsg):
+                        await self.handle_worker_message(msg)
+                    elif isinstance(msg, OrchMsg):
+                        await self.handle_orchestration_message(msg)
+                    else:
+                        logger.error(f"Unknown message type: {type(msg)}")
+            except Exception as e:
+                logger.error(f"Controller Manager error: {e}")
+
+    async def handle_worker_message(self, msg: WorkerMsg) -> None:
+        if isinstance(msg, HeartbeatMsg):
+            await self.reg_controller.heartbeat(msg)
+        elif isinstance(msg, RegisterMsg):
+            await self.reg_controller.register(msg)
+        elif isinstance(msg, DeRegisterMsg):
+            await self.reg_controller.deregister(msg)
+        elif isinstance(msg, KVAdmitMsg):
+            await self.kv_controller.admit(msg)
+        elif isinstance(msg, KVEvictMsg):
+            await self.kv_controller.evict(msg)
+        else:
+            logger.error(f"Unknown worker message type: {msg}")
 
     async def handle_orchestration_message(self, msg: OrchMsg) -> OrchRetMsg:
         if isinstance(msg, LookupMsg):
@@ -77,6 +156,9 @@ class LMCacheControllerManager:
         else:
             logger.error(f"Unknown orchestration message type: {msg}")
             raise RuntimeError(f"Unknown orchestration message type: {msg}")
+
+
+
 
 
 

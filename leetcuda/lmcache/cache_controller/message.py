@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, Union
 
 import msgspec
 
@@ -17,38 +17,11 @@ class ErrorMsg(MsgBase):
     def describe(self) -> str:
         return f"Error: {self.error}"
 
-
 class WorkerMsg(MsgBase):
     """Message between LMCache and Controller"""
 
     def describe(self) -> str:
         return ""
-
-
-class KVAdmitMsg(WorkerMsg):
-    """Message for KV chunk admission"""
-    # TODO(Jiayi): instance_id can be replaced with url
-    instance_id: str
-    worker_id: int
-    key: str
-    location: str
-
-    def describe(self) -> str:
-        return f"kv_admit {self.key} to {self.instance_id}"
-
-
-
-class KVEvictMsg(WorkerMsg):
-    """Message for KV chunk eviction"""
-    # TODO(Jiayi): instance_id can be replaced with url
-    instance_id: str
-    worker_id: int
-    key: str
-    location: str
-
-    def describe(self) -> str:
-        return f"kv_evict {self.key} from {self.instance_id}"
-
 
 """Orchestration Message from Ochestrator to LMCache"""
 class OrchMsg(MsgBase):
@@ -107,6 +80,16 @@ class HealthMsg(OrchMsg):
     def describe(self) -> str:
         return f"Health check for instance {self.instance_id}"
 
+class HealthRetMsg(OrchRetMsg):
+    """Health return message"""
+
+    event_id: str
+    # worker_id -> error_code
+    error_codes: Dict[int, int]
+
+    def describe(self) -> str:
+        return f"error_codes: {self.error_codes}"
+
 class ClearMsg(OrchMsg):
     """Clear message"""
 
@@ -141,6 +124,15 @@ class PinMsg(OrchMsg):
             f"location {self.location}"
         )
 
+class PinRetMsg(OrchRetMsg):
+    """Pin return message"""
+
+    event_id: str
+    num_tokens: int
+
+    def describe(self) -> str:
+        return f"Number of pinned tokens: {self.num_tokens}"
+
 class CompressMsg(OrchMsg):
     """Compress message"""
 
@@ -157,6 +149,15 @@ class CompressMsg(OrchMsg):
             f"locations {self.location} with "
             f"method {self.method}"
         )
+
+class CompressRetMsg(OrchRetMsg):
+    """Compress return message"""
+
+    event_id: str
+    num_tokens: int
+
+    def describe(self) -> str:
+        return f"Compressed {self.num_tokens} tokens"
 
 class DecompressMsg(OrchMsg):
     """Decompress message"""
@@ -175,6 +176,15 @@ class DecompressMsg(OrchMsg):
             f"method {self.method}"
         )
 
+class DecompressRetMsg(OrchRetMsg):
+    """Decompress return message"""
+
+    event_id: str
+    num_tokens: int
+
+    def describe(self) -> str:
+        return f"Decompressed {self.num_tokens} tokens"
+
 class MoveMsg(OrchMsg):
     """Move message"""
 
@@ -189,6 +199,15 @@ class MoveMsg(OrchMsg):
             f"Move tokens {self.tokens} from {self.old_position} to {self.new_position}"
         )
 
+class MoveRetMsg(OrchRetMsg):
+    """Move return message"""
+
+    event_id: str
+    num_tokens: int
+
+    def describe(self) -> str:
+        return f"Moving {self.num_tokens} tokens"
+
 class CheckFinishMsg(OrchMsg):
     """Check finish message"""
 
@@ -196,3 +215,140 @@ class CheckFinishMsg(OrchMsg):
 
     def describe(self) -> str:
         return f"Checking finish for event {self.event_id}"
+
+class CheckFinishRetMsg(OrchRetMsg):
+    """Check finish return message"""
+
+    status: str
+
+    def describe(self) -> str:
+        return f"Event status: {self.status}"
+
+"""Worker Request (requiring an reply) Message from LMcache to Controller"""
+class WorkerReqMsg(MsgBase):
+    def describe(self) -> str:
+        return ""
+
+class WorkerReqRetMsg(MsgBase):
+    def describe(self) -> str:
+        return ""
+
+class BatchedP2PLookupMsg(WorkerReqMsg):
+    """Batched P2P lookup message"""
+
+    hashes: list[int]
+    instance_id: str
+    worker_id: int  # TP rank
+
+    def describe(self) -> str:
+        return (
+            f"Batched P2P lookup for {len(self.hashes)} keys from "
+            f"instance id {self.instance_id} and "
+            f"worker id {self.worker_id}"
+        )
+
+class KVAdmitMsg(WorkerMsg):
+    """Message for KV chunk admission"""
+    # TODO(Jiayi): instance_id can be replaced with url
+    instance_id: str
+    worker_id: int
+    key: str
+    location: str
+
+    def describe(self) -> str:
+        return f"kv_admit {self.key} to {self.instance_id}"
+
+class KVEvictMsg(WorkerMsg):
+    """Message for KV chunk eviction"""
+    # TODO(Jiayi): instance_id can be replaced with url
+    instance_id: str
+    worker_id: int
+    key: str
+    location: str
+
+    def describe(self) -> str:
+        return f"kv_evict {self.key} from {self.instance_id}"
+
+class RegisterMsg(WorkerMsg):
+    """Message for Registration"""
+
+    instance_id: str
+    worker_id: int
+    ip: str
+    port: int
+    distributed_url: str  # URL for actual KV cache transfer
+
+    def describe(self) -> str:
+        return (
+            f"Registering instance {self.instance_id}, "
+            f"worker {self.worker_id} "
+            f"at {self.ip}:{self.port}"
+            f" with distributed URL {self.distributed_url}"
+        )
+
+class DeRegisterMsg(WorkerMsg):
+    """Message for Deregistration"""
+
+    instance_id: str
+    worker_id: int
+    ip: str
+    port: int
+
+    def describe(self) -> str:
+        return (
+            f"Deregistering instance {self.instance_id}, "
+            f"worker {self.worker_id} "
+            f"at {self.ip}:{self.port}"
+        )
+
+class HeartbeatMsg(RegisterMsg):
+    """Message for heartbeat, include register info for re-register"""
+
+    # TODO: add more heartbeat info
+
+    def describe(self) -> str:
+        return f"Heartbeat from instance {self.instance_id}, worker {self.worker_id}"
+
+
+Msg = Union[
+    RegisterMsg,
+    DeRegisterMsg,
+    KVAdmitMsg,
+    KVEvictMsg,
+    ClearWorkerMsg,
+    ClearWorkerRetMsg,
+    PinWorkerMsg,
+    PinWorkerRetMsg,
+    CompressWorkerMsg,
+    CompressWorkerRetMsg,
+    DecompressWorkerMsg,
+    DecompressWorkerRetMsg,
+    MoveWorkerMsg,
+    MoveWorkerRetMsg,
+    HealthWorkerMsg,
+    HealthWorkerRetMsg,
+    CheckFinishWorkerMsg,
+    CheckFinishWorkerRetMsg,
+    LookupMsg,
+    LookupRetMsg,
+    ClearMsg,
+    ClearRetMsg,
+    PinMsg,
+    PinRetMsg,
+    CompressMsg,
+    CompressRetMsg,
+    DecompressMsg,
+    DecompressRetMsg,
+    MoveMsg,
+    MoveRetMsg,
+    HealthMsg,
+    HealthRetMsg,
+    CheckFinishMsg,
+    CheckFinishRetMsg,
+    ErrorMsg,
+    QueryInstMsg,
+    QueryInstRetMsg,
+    HeartbeatMsg,
+    BatchedP2PLookupMsg,
+    BatchedP2PLookupRetMsg,
+]
