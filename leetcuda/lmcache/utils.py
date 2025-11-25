@@ -45,6 +45,7 @@ class CacheEngineKey:
     world_size: int
     worker_id: int
     chunk_hash: str
+    request_configs: Optional[dict] = None
 
     def to_string(self):
         return f"{self.fmt}@{self.model_name}@{self.world_size}@{self.worker_id}@{self.chunk_hash}"

@@ -34,14 +34,22 @@ class ChunkedTokenDatabase(TokenDatabase):
         self.metadata = metadata
 
     def process_tokens(
-        self, tokens: Union[torch.Tensor, List[int]],
-        mask: Optional[torch.Tensor] = None,
-        make_key: bool = True,
-    ) -> Iterable[Tuple[int, int, Union[CacheEngineKey, str]]]:
+            self,
+            tokens: Optional[Union[torch.Tensor, List[int]]] = None,
+            hashes: Optional[List[int]] = None,
+            offsets: Optional[List[int]] = None,
+            mask: Optional[torch.Tensor] = None,
+            make_key: bool = True,
+            request_configs: Optional[dict] = None,
+    ) -> Iterable[Tuple[int, int, Union[CacheEngineKey, int]]]:
         """
         Process the tokens and return the corresponding cache engine keys.
-        """
 
+        :returns: A iterable of tuples with three elements. The first element
+            is the start index of the tokens for the key. The second element
+            is the end index of the tokens for the key. The third element is
+            the cache engine key (or hash) for the tokens.
+        """
         if mask is not None:
             num_falses = mask.numel() - mask.long().sum().item()
         else:
@@ -49,20 +57,33 @@ class ChunkedTokenDatabase(TokenDatabase):
         if num_falses % self.chunk_size != 0:
             raise ValueError("The number of Falses in the mask is not a multiple of the chunk size.")
 
-        total_len = len(tokens)
-        token_chunks = self.chunk_tokens(tokens)
-        prefix_hashes = self.prefix_hash(token_chunks)
-        start_idx = 0
-        for chunk_id, hash_val in enumerate(prefix_hashes):
-            start_idx = chunk_id * self.chunk_size
-            end_idx = min(start_idx + self.chunk_size, total_len)
-            if start_idx < num_falses:
-                continue
-            else:
+        if tokens is not None:
+            total_len = len(tokens)
+            token_chunks = self.chunk_tokens(tokens)
+            prefix_hashes = self.prefix_hash(token_chunks)
+            start_idx = 0
+            for chunk_id, hash_val in enumerate(prefix_hashes):
+                start_idx = chunk_id * self.chunk_size
+                end_idx = min(start_idx + self.chunk_size, total_len)
+                if start_idx < num_falses:
+                    continue
+                else:
+                    if make_key:
+                        yield start_idx, end_idx, self.make_key_by_hash(hash_val, request_configs)
+                    else:
+                        yield start_idx, end_idx, hash_val
+        elif hashes is not None:
+            assert offsets is not None, "If hashes are provided, offsets must also be provided."
+            start_idx = 0
+            for hash_val, offset in zip(hashes, offsets, strict=False):
+                end_idx = start_idx + offset
                 if make_key:
-                    yield start_idx, end_idx, self.make_key_by_hash(hash_val)
+                    yield start_idx, end_idx, self.make_key_by_hash(hash_val, request_configs)
                 else:
                     yield start_idx, end_idx, hash_val
+                start_idx = end_idx
+        else:
+            raise ValueError("Either tokens or hashes must be provided.")
 
     def chunk_tokens(self, tokens: Union[torch.Tensor, List[int]]) -> Iterable[Union[torch.Tensor, List[int]]]:
         """
@@ -80,9 +101,9 @@ class ChunkedTokenDatabase(TokenDatabase):
             prefix_hash = self.hash(token_chunk, prefix_hash)
             yield prefix_hash
 
-    def make_key_by_hash(self, chunk_hash: str):
+    def make_key_by_hash(self, chunk_hash: str, request_configs: Optional[dict] = None):
         assert self.metadata is not None
-        return CacheEngineKey(self.metadata.fmt, self.metadata.model_name, self.metadata.world_size, self.metadata.worker_id, chunk_hash)
+        return CacheEngineKey(self.metadata.fmt, self.metadata.model_name, self.metadata.world_size, self.metadata.worker_id, chunk_hash, request_configs)
 
     def get_init_hash(self) -> str:
         return ""

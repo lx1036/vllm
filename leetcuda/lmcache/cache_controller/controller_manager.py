@@ -1,3 +1,84 @@
+from leetcuda.lmcache.cache_controller.controllers.kv_controller import KVController
+from leetcuda.lmcache.cache_controller.controllers.registration_controller import RegistrationController
+from leetcuda.lmcache.cache_controller.executor import LMCacheClusterExecutor
+from leetcuda.lmcache.cache_controller.message import LookupMsg, HealthMsg, QueryInstMsg, ClearMsg, PinMsg, CompressMsg, \
+    DecompressMsg, MoveMsg, CheckFinishMsg
+from leetcuda.lmcache.log import init_logger
+from leetcuda.lmcache.rpc_utils import get_zmq_context, get_zmq_socket
+
+
+logger = init_logger(__name__)
+
+
+class LMCacheControllerManager:
+    def __init__(self, controller_urls: dict[str, str]):
+        self.zmq_context = get_zmq_context()
+        self.controller_urls = controller_urls
+        # TODO: We might need multiple sockets if there are more
+        # controllers. For now, we use a single socket to receive messages
+        # for all controllers.
+        # Similarly we might need more sockets to handle different control
+        # messages. For now, we use one socket to handle all control messages.
+
+        # TODO: Another thing is that we might need to decoupe the
+        # interactions among `handle_worker_message`, `handle_control_message`
+        # and `handle_orchestration_message`. For example, in
+        # `handle_orchestration_message`, we might need to call
+        # `issue_control_message`. This will make the system less concurrent.
+
+        # Micro controllers
+        self.controller_pull_socket = get_zmq_socket(
+            self.zmq_context,
+            self.controller_urls["pull"],
+            protocol="tcp",
+            role=zmq.PULL,  # type: ignore[attr-defined]
+            bind_or_connect="bind",
+        )
+        if self.controller_urls["reply"] is not None:
+            self.controller_rep_socket = get_zmq_socket(
+                self.zmq_context,
+                self.controller_urls["reply"],
+                protocol="tcp",
+                role=zmq.REP,  # type: ignore[attr-defined]
+                bind_or_connect="bind",
+            )
+
+        self.kv_controller = KVController()
+        self.reg_controller = RegistrationController()
+        # Cluster executor
+        self.cluster_executor = LMCacheClusterExecutor(reg_controller=self.reg_controller)
+        # post initialization of controllers
+        self.kv_controller.post_init(reg_controller=self.reg_controller, cluster_executor=self.cluster_executor)
+        self.reg_controller.post_init(kv_controller=self.kv_controller, cluster_executor=self.cluster_executor)
+
+
+
+    async def handle_orchestration_message(self, msg: OrchMsg) -> OrchRetMsg:
+        if isinstance(msg, LookupMsg):
+            return await self.kv_controller.lookup(msg)
+        elif isinstance(msg, HealthMsg):
+            return await self.reg_controller.health(msg)
+        elif isinstance(msg, QueryInstMsg):
+            return await self.reg_controller.get_instance_id(msg)
+        elif isinstance(msg, ClearMsg):
+            return await self.kv_controller.clear(msg)
+        elif isinstance(msg, PinMsg):
+            return await self.kv_controller.pin(msg)
+        elif isinstance(msg, CompressMsg):
+            return await self.kv_controller.compress(msg)
+        elif isinstance(msg, DecompressMsg):
+            return await self.kv_controller.decompress(msg)
+        elif isinstance(msg, MoveMsg):
+            return await self.kv_controller.move(msg)
+        elif isinstance(msg, CheckFinishMsg):
+            # FIXME(Jiayi): This `check_finish` thing
+            # shouldn't be implemented in kv_controller.
+            return await self.kv_controller.check_finish(msg)
+        else:
+            logger.error(f"Unknown orchestration message type: {msg}")
+            raise RuntimeError(f"Unknown orchestration message type: {msg}")
+
+
 
 
 
