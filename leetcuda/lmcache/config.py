@@ -39,7 +39,8 @@ class LMCacheEngineConfig:
     # the id of the lmcache instance
     lmcache_instance_id: str = "lmcache_default_instance"
     # controller url
-    controller_url: Optional[str] = None
+    controller_pull_url: Optional[str] = None
+    controller_reply_url: Optional[str] = None
     # lmcache worker url
     # NOTE: port number will add `worker_id`
     lmcache_worker_url: Optional[str] = None

@@ -1,0 +1,13 @@
+
+
+enable_controller: True
+lmcache_instance_id: "lmcache_instance_id"
+controller_pull_url: ip:pull_port
+# if controller reply port is None, no need to configure reply url
+controller_reply_url: ip:reply_port
+# the number of ports for LMCache Worker, must equal to the number of ranks
+lmcache_worker_ports: [1, 2, 3]
+
+# p2p configuration
+p2p_host: localhost
+p2p_init_port: [11, 12, 13]

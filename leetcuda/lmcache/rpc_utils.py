@@ -1,6 +1,11 @@
+import socket
 
 import zmq
 import zmq.asyncio
+
+from leetcuda.lmcache.log import init_logger
+
+logger = init_logger(__name__)
 
 def get_zmq_context(use_asyncio: bool = True):
     if use_asyncio:
@@ -29,5 +34,21 @@ def get_zmq_socket(context, socket_path: str, protocol: str, role: zmq.SocketTyp
     return socket
 
 
+def get_ip():
+    """
+    Get the local IP address of the machine.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # "Connect" to a public IP — just to determine local IP
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        logger.warning("Failed to get local IP address. Falling back to loopback address.")
+        return "127.0.0.1"  # Fallback to loopback
+    finally:
+        s.close()
 
+def test_get_ip():
+    print(get_ip()) # 192.168.31.223
 
