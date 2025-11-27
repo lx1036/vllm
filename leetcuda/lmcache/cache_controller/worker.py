@@ -214,7 +214,7 @@ def test_lmcache_worker():
     engine_metadata = create_engine_metadata()
 
     worker = LMCacheWorker(engine_config, engine_metadata)
-    time.sleep(10)
+    time.sleep(30)
     # worker.register()
     worker.close()
     # while True:

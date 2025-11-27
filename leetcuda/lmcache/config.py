@@ -106,6 +106,7 @@ class LMCacheEngineConfig:
         controller_reply_url = config.get("controller_reply_url", None)
         lmcache_worker_url = config.get("lmcache_worker_url", None)
         lmcache_worker_ports = config.get("lmcache_worker_ports", None)
+        lmcache_worker_heartbeat_time = config.get("lmcache_worker_heartbeat_time", None)
 
         enable_nixl = config.get("enable_nixl", False)
         nixl_role = config.get("nixl_role", None)
@@ -160,6 +161,7 @@ class LMCacheEngineConfig:
             controller_reply_url=controller_reply_url,
             lmcache_worker_url=lmcache_worker_url,
             lmcache_worker_ports=lmcache_worker_ports,
+            lmcache_worker_heartbeat_time=lmcache_worker_heartbeat_time,
             enable_nixl=enable_nixl,
             nixl_role=nixl_role,
             nixl_peer_host=nixl_peer_host,

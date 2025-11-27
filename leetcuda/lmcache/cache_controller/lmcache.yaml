@@ -7,6 +7,7 @@ controller_pull_url: localhost:8300
 controller_reply_url: localhost:8400
 # the number of ports for LMCache Worker, must equal to the number of ranks
 lmcache_worker_ports: [1000, 2000, 3000]
+lmcache_worker_heartbeat_time: 3
 
 # p2p configuration
 p2p_host: localhost
