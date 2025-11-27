@@ -47,7 +47,7 @@ class LMCacheClusterExecutor:
 
 
 
-    async def clear(self, msg: ClearMsg) -> Union[ClearRetMsg, ErrorMsg]:
+    # async def clear(self, msg: ClearMsg) -> Union[ClearRetMsg, ErrorMsg]:
 
 
 

@@ -3,6 +3,7 @@ import json
 from typing import Optional
 
 import msgspec
+import zmq
 
 from leetcuda.lmcache.cache_controller.controllers.kv_controller import KVController
 from leetcuda.lmcache.cache_controller.controllers.registration_controller import RegistrationController

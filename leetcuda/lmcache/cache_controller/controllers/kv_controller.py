@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from leetcuda.lmcache.cache_controller.executor import LMCacheClusterExecutor
 from leetcuda.lmcache.cache_controller.message import LookupMsg, LookupRetMsg, ClearMsg, ClearRetMsg
 from leetcuda.lmcache.token_database import ChunkedTokenDatabase
@@ -7,7 +9,15 @@ from leetcuda.lmcache.token_database import ChunkedTokenDatabase
 # to handle these operations (e.g., evict, deregister)
 # more efficiently.
 
+@dataclass
+class KVChunkMetadata:
+    """
+    A class representing a KV chunk metadata.
+    """
 
+    instance_id: str
+    worker_id: int
+    location: str
 
 class KVController:
     def __init__(self) -> None:

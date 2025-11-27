@@ -33,6 +33,21 @@ def get_zmq_socket(context, socket_path: str, protocol: str, role: zmq.SocketTyp
 
     return socket
 
+def close_zmq_socket(socket: zmq.asyncio.Socket, linger: int = 0) -> None:
+    """
+    Close a ZeroMQ socket cleanly.
+
+    :param socket: The zmq.Socket to be closed.
+    :param linger: LINGER period (in milliseconds).
+    Default is 0 (drop immediately).
+    """
+    try:
+        socket.setsockopt(zmq.LINGER, linger)  # type: ignore[attr-defined]
+        socket.close()
+    except Exception as e:
+        logger.error(f"Warning: Failed to close socket cleanly: {e}")
+
+
 
 def get_ip():
     """

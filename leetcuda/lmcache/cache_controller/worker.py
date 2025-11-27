@@ -10,7 +10,7 @@ import zmq
 from leetcuda.lmcache.cache_controller.message import WorkerMsg, RegisterMsg, DeRegisterMsg, HeartbeatMsg
 from leetcuda.lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata, create_engine_metadata
 from leetcuda.lmcache.log import init_logger
-from leetcuda.lmcache.rpc_utils import get_ip, get_zmq_context, get_zmq_socket
+from leetcuda.lmcache.rpc_utils import get_ip, get_zmq_context, get_zmq_socket, close_zmq_socket
 
 if TYPE_CHECKING: # fix circular import
     from leetcuda.lmcache.cache_engine import LMCacheEngine
@@ -104,7 +104,7 @@ class LMCacheWorker:
         while True:
             try:
                 msgs = await self.batched_get_msg()
-                logger.info(f"Sending {len(msgs)} messages")
+                logger.info(f"[push]Sending {len(msgs)} messages")
                 self.push_socket.send_multipart([msgspec.msgpack.encode(msg) for msg in msgs])
             except Exception as e:
                 logger.error(f"Push error: {e}")
@@ -194,7 +194,16 @@ class LMCacheWorker:
                 await asyncio.sleep(self.config.lmcache_worker_heartbeat_time)
 
     def close(self):
-        logger.info("close")
+        self.deregister()
+        # 停止事件循环
+        if self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        # 等待线程结束
+        if self.thread.is_alive():
+            self.thread.join()
+
+        close_zmq_socket(self.push_socket)
+        close_zmq_socket(self.reply_socket)
 
 def test_lmcache_worker():
     logger.info("test_lmcache_worker")
@@ -205,7 +214,7 @@ def test_lmcache_worker():
     engine_metadata = create_engine_metadata()
 
     worker = LMCacheWorker(engine_config, engine_metadata)
-    # time.sleep(3)
+    time.sleep(10)
     # worker.register()
     worker.close()
     # while True:
@@ -215,13 +224,48 @@ def test_lmcache_worker():
 
 def test_goroutine():
     async def start_all():
-        logger.info("start_all")
-        print("print start_all")
+        try:
+            logger.info("start_all")
+            print("print start_all")
+        except Exception as e:
+            logger.error(f"Error in start_all: {e}")
 
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
-    asyncio.run_coroutine_threadsafe(start_all(), loop)
 
-    time.sleep(3)
+    # 提交协程到事件循环
+    future = asyncio.run_coroutine_threadsafe(start_all(), loop)
+    # 等待协程完成
+    try:
+        future.result()
+    except Exception as e:
+        logger.error(f"Error in future: {e}")
 
+    time.sleep(10)
+
+    # 停止事件循环
+    loop.call_soon_threadsafe(loop.stop)
+    thread.join()
+
+def test_push_socket():
+    context = get_zmq_context()
+    push_socket = get_zmq_socket(
+        context,
+        "localhost:8300",
+        protocol="tcp",
+        role=zmq.PUSH,  # type: ignore[attr-defined]
+        bind_or_connect="connect",
+    )
+
+    msgs = [
+        RegisterMsg(
+            instance_id="lmcache_default_instance",
+            worker_id=1,
+            ip="10.20.30.40",
+            port=1000,
+            distributed_url="",
+        )
+    ]
+
+    push_socket.send_multipart([msgspec.msgpack.encode(msg) for msg in msgs])

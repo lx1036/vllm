@@ -42,12 +42,20 @@ def create_app(controller_urls: dict[str, str]) -> FastAPI:
     """
     lmcache_controller_manager = LMCacheControllerManager(controller_urls)
 
+    # 这段代码的主要作用是在 FastAPI 应用启动时启动一个后台任务，并在应用关闭时取消该任务。
+    # 这样可以确保后台任务在应用的生命周期内正确运行，并在应用关闭时进行适当的清理。
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Start background task here, goroutine
         lmcache_cluster_monitor_task = asyncio.create_task(lmcache_controller_manager.start_all())
-        yield lmcache_cluster_monitor_task.cancel()
+        # yield 是异步上下文管理器的关键部分。当 yield 被执行时，控制权返回到调用者，应用开始正常运行。
+        # 在应用运行期间，lmcache_cluster_monitor_task 会在后台继续执行。
+        yield
+        # 当应用关闭时，yield 之后的代码会被执行。首先调用 lmcache_cluster_monitor_task.cancel() 来取消后台任务。
+        # cancel 方法会尝试取消任务，但不会立即停止任务的执行，而是将任务的状态设置为取消状态。
+        lmcache_cluster_monitor_task.cancel()
         try:
+            # 使用 await 等待任务完成。如果任务已经被取消，await 会引发 asyncio.CancelledError 异常。
             await lmcache_cluster_monitor_task
         except asyncio.CancelledError:
             pass
@@ -220,7 +228,7 @@ def create_app(controller_urls: dict[str, str]) -> FastAPI:
         old_position: Tuple[str, str]
         new_position: Tuple[str, str]
         tokens: Optional[List[int]] = []
-        copy: Optional[bool] = False
+        # copy: Optional[bool] = False
 
     class MoveResponse(BaseModel):
         event_id: str
@@ -303,9 +311,15 @@ def main():
         help='JSON string of monitor ports, e.g. \'{"pull": 8300, "reply": 8400}\'',
     )
     parser.add_argument(
-        "--monitor-port",
+        "--monitor-pull-port",
         type=int,
-        default=9001,
+        default=8300,
+        help="The controller pull port to maintain backward compatibility.",
+    )
+    parser.add_argument(
+        "--monitor-reply-port",
+        type=int,
+        default=8400,
         help="The controller pull port to maintain backward compatibility.",
     )
 
@@ -320,18 +334,19 @@ def main():
         else:
             logger.warning("Argument --monitor-port will be deprecated soon. Please use --monitor-ports instead.")
             controller_urls = {
-                "pull": f"{args.host}:{args.monitor_port}",
-                "reply": None,
+                "pull": f"{args.host}:{args.monitor_pull_port}",
+                "reply": f"{args.host}:{args.monitor_reply_port}",
             }
 
-        app = create_app(controller_urls)
-
         logger.info(f"Starting LMCache controller at {args.host}:{args.port}")
-        logger.info(f"Monitoring lmcache workers at ports {args.monitor_ports}")
+        logger.info(f"controller_urls: {controller_urls}")
+
+        app = create_app(controller_urls)
 
         uvicorn.run(app, host=args.host, port=args.port)
     except TimeoutError as e:
         logger.error(e)
 
+# python3
 if __name__ == "__main__":
     main()
