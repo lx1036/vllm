@@ -1,12 +1,14 @@
 import asyncio
+import os.path
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import msgspec
 import zmq
 
 from leetcuda.lmcache.cache_controller.message import WorkerMsg, RegisterMsg, DeRegisterMsg, HeartbeatMsg
-from leetcuda.lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata
+from leetcuda.lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata, create_engine_metadata
 from leetcuda.lmcache.log import init_logger
 from leetcuda.lmcache.rpc_utils import get_ip, get_zmq_context, get_zmq_socket
 
@@ -29,7 +31,7 @@ class LMCacheWorker:
             self,
             config: LMCacheEngineConfig,
             metadata: LMCacheEngineMetadata,
-            lmcache_engine: "LMCacheEngine", # fix circular import
+            # lmcache_engine: "LMCacheEngine", # fix circular import
     ):
         """
         LMCacheWorker register/deregister/heartbeat to RegisterController
@@ -40,6 +42,7 @@ class LMCacheWorker:
         lmcache_worker_port = config.lmcache_worker_ports[self.worker_id]
         self.lmcache_worker_ip = get_ip()
         self.lmcache_worker_port = lmcache_worker_port
+        # self.lmcache_engine = lmcache_engine
 
         self.context = get_zmq_context()
         assert config.controller_pull_url is not None
@@ -73,11 +76,11 @@ class LMCacheWorker:
             bind_or_connect="bind",
         )
 
-        # logger.info(f"Reply socket established at {self.lmcache_worker_internal_url}")
+        logger.info(f"Reply socket established at {self.lmcache_worker_internal_url}")
 
         # go self.start_all()
         self.loop = asyncio.new_event_loop()
-        self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
+        self.thread = threading.Thread(target=self.loop.run_forever, daemon=False)
         self.thread.start()
         asyncio.run_coroutine_threadsafe(self.start_all(), self.loop)
 
@@ -101,7 +104,7 @@ class LMCacheWorker:
         while True:
             try:
                 msgs = await self.batched_get_msg()
-                logger.debug(f"Sending {len(msgs)} messages")
+                logger.info(f"Sending {len(msgs)} messages")
                 self.push_socket.send_multipart([msgspec.msgpack.encode(msg) for msg in msgs])
             except Exception as e:
                 logger.error(f"Push error: {e}")
@@ -190,6 +193,35 @@ class LMCacheWorker:
 
                 await asyncio.sleep(self.config.lmcache_worker_heartbeat_time)
 
+    def close(self):
+        logger.info("close")
+
 def test_lmcache_worker():
     logger.info("test_lmcache_worker")
+
+    file = os.path.join(os.path.dirname(__file__), "lmcache.yaml")
+    engine_config = LMCacheEngineConfig.from_file(file)
+    logger.debug(f"engine_config: {engine_config}")
+    engine_metadata = create_engine_metadata()
+
+    worker = LMCacheWorker(engine_config, engine_metadata)
+    # time.sleep(3)
+    # worker.register()
+    worker.close()
+    # while True:
+    #     time.sleep(5)
+    #     worker.close()
+
+
+def test_goroutine():
+    async def start_all():
+        logger.info("start_all")
+        print("print start_all")
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    asyncio.run_coroutine_threadsafe(start_all(), loop)
+
+    time.sleep(3)
 

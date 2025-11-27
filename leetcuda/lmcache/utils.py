@@ -118,5 +118,5 @@ def check_mem_obj_equal(left, right, offset=0):
         assert (left_k[:, :, :] == right_k[:, :, :]).all()
         assert (left_v[:, :, :] == right_v[:, :, :]).all()
 
-
-
+def get_lmcache_dir():
+    return os.environ.get("LMCACHE_DIR", ".lmcache")

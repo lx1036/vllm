@@ -12,7 +12,7 @@ class LMCacheEngineConfig:
 
     # need to be assigned a non-zero
     # value even if local_cpu is disabled
-    local_disk: Optional[str]
+    # local_disk: Optional[str]
     max_local_disk_size: float  # in GB
 
     remote_url: Optional[str]
@@ -30,6 +30,8 @@ class LMCacheEngineConfig:
     enable_p2p: bool = False  # whether to enable peer-to-peer sharing
     lookup_url: Optional[str] = None  # the url of the lookup server
     distributed_url: Optional[str] = None  # the url of the distributed server
+    p2p_host: Optional[str] = None # the host of the lookup server
+    p2p_init_ports: Optional[list[int]] = None
 
     # Error handling related configurations
     error_handling: bool = False  # whether to enable error handling
@@ -41,9 +43,13 @@ class LMCacheEngineConfig:
     # controller url
     controller_pull_url: Optional[str] = None
     controller_reply_url: Optional[str] = None
+    lmcache_worker_ports: Optional[list[int]] = None
     # lmcache worker url
     # NOTE: port number will add `worker_id`
     lmcache_worker_url: Optional[str] = None
+    # the lmcache_worker_heartbeat_time means that sending heartbeat periodically.
+    lmcache_worker_heartbeat_time: Optional[int] = None
+    lmcache_worker_heartbeat_delay_time: int = 10
 
     # (Optional) Nixl configurations
     # whether to enable Nixl
@@ -94,10 +100,12 @@ class LMCacheEngineConfig:
         error_handling = config.get("error_handling", False)
 
         enable_controller = config.get("enable_controller", False)
-        lmcache_instance_id = config.get("lmcache_instance_id",
-                                         "lmcache_default_instance")
+        lmcache_instance_id = config.get("lmcache_instance_id","lmcache_default_instance")
         controller_url = config.get("controller_url", None)
+        controller_pull_url = config.get("controller_pull_url", None)
+        controller_reply_url = config.get("controller_reply_url", None)
         lmcache_worker_url = config.get("lmcache_worker_url", None)
+        lmcache_worker_ports = config.get("lmcache_worker_ports", None)
 
         enable_nixl = config.get("enable_nixl", False)
         nixl_role = config.get("nixl_role", None)
@@ -107,6 +115,11 @@ class LMCacheEngineConfig:
         nixl_buffer_device = config.get("nixl_buffer_device", None)
         nixl_enable_gc = config.get("nixl_enable_gc", False)
 
+        p2p_host = config.get("p2p_host", None)
+        p2p_init_ports = config.get("p2p_init_ports", None)
+
+
+        local_disk_path = None
         match local_disk:
             case None:
                 local_disk_path = None
@@ -122,33 +135,38 @@ class LMCacheEngineConfig:
                 raise ValueError(f"Invalid remote storage url: {remote_url}")
 
         return LMCacheEngineConfig(
-            chunk_size,
-            local_cpu,
-            max_local_cpu_size,
-            local_disk_path,
-            max_local_disk_size,
-            remote_url,
-            remote_serde,
-            save_decode_cache,
-            enable_blending,
-            blend_recompute_ratio,
-            blend_min_tokens,
-            blend_special_str,
-            enable_p2p,
-            lookup_url,
-            distributed_url,
-            error_handling,
-            enable_controller,
-            lmcache_instance_id,
-            controller_url,
-            lmcache_worker_url,
-            enable_nixl,
-            nixl_role,
-            nixl_peer_host,
-            nixl_peer_port,
-            nixl_buffer_size,
-            nixl_buffer_device,
-            nixl_enable_gc,
+            chunk_size=chunk_size,
+            local_cpu=local_cpu,
+            max_local_cpu_size=max_local_cpu_size,
+            # local_disk_path=local_disk_path,
+            max_local_disk_size=max_local_disk_size,
+            remote_url=remote_url,
+            remote_serde=remote_serde,
+            save_decode_cache=save_decode_cache,
+            enable_blending=enable_blending,
+            blend_recompute_ratio=blend_recompute_ratio,
+            blend_min_tokens=blend_min_tokens,
+            blend_special_str=blend_special_str,
+            enable_p2p=enable_p2p,
+            p2p_host=p2p_host,
+            p2p_init_ports=p2p_init_ports,
+            lookup_url=lookup_url,
+            distributed_url=distributed_url,
+            error_handling=error_handling,
+            enable_controller=enable_controller,
+            lmcache_instance_id=lmcache_instance_id,
+            # controller_url=controller_url,
+            controller_pull_url=controller_pull_url,
+            controller_reply_url=controller_reply_url,
+            lmcache_worker_url=lmcache_worker_url,
+            lmcache_worker_ports=lmcache_worker_ports,
+            enable_nixl=enable_nixl,
+            nixl_role=nixl_role,
+            nixl_peer_host=nixl_peer_host,
+            nixl_peer_port=nixl_peer_port,
+            nixl_buffer_size=nixl_buffer_size,
+            nixl_buffer_device=nixl_buffer_device,
+            nixl_enable_gc=nixl_enable_gc,
         ).validate()
 
     @staticmethod
@@ -262,3 +280,13 @@ class LMCacheEngineMetadata:
     """
     kv_shape: tuple[int, int, int, int, int]
 
+# for test
+def create_engine_metadata(kv_shape=(32, 2, 256, 8, 128)) -> LMCacheEngineMetadata:
+    return LMCacheEngineMetadata(
+        model_name="test_model",
+        world_size=3,
+        worker_id=1,
+        fmt="vllm",
+        kv_dtype=torch.bfloat16,
+        kv_shape=kv_shape,
+    )
