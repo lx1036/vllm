@@ -6,7 +6,7 @@ from leetcuda.lmcache.cache_controller.worker import LMCacheWorker
 from leetcuda.lmcache.config import LMCacheEngineMetadata, LMCacheEngineConfig
 from leetcuda.lmcache.lookup_server.abstract_server import LookupServerInterface
 from leetcuda.lmcache.memory_management import MemoryAllocatorInterface, MemoryObj, MemoryObjMetadata
-from leetcuda.lmcache.storage_backend.abstract_backend import StorageBackendInterface
+from leetcuda.lmcache.storage_backend.base_backend import StorageBackendInterface
 from leetcuda.lmcache.storage_backend.local_disk_backend import LocalDiskBackend
 from leetcuda.lmcache.storage_backend.remote_backend import RemoteBackend
 from leetcuda.lmcache.log import init_logger

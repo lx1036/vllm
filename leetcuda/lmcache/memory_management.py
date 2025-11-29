@@ -4,13 +4,14 @@ import threading
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Union, Tuple
+from typing import Optional, Union, Tuple, List
 
 import sortedcontainers
 import torch
 
 from leetcuda.lmcache.log import init_logger
 from leetcuda.lmcache.observability import LMCStatsMonitor
+from leetcuda.lmcache.utils import _lmcache_nvtx_annotate
 
 logger = init_logger(__name__)
 
@@ -42,8 +43,16 @@ class MemoryObjMetadata:
     # Reference count
     ref_count: int
 
+    # Whether the object is pinned and cannot be evicted
+    # lookup pins are temporary
+    # cache controller pins are persistent
+    pin_count: int = 0
+
     # The 'logical' format of the tensor
     fmt: MemoryFormat = MemoryFormat.UNDEFINED
+
+    # Positions when the cache is stored
+    cached_positions: Optional[torch.Tensor] = None
 
 class MemoryObj(metaclass=abc.ABCMeta):
 
@@ -68,7 +77,6 @@ class MemoryObj(metaclass=abc.ABCMeta):
         Get the byte array from the MemoryObj.
         """
         raise NotImplementedError
-
 
     @property
     @abc.abstractmethod
@@ -120,26 +128,44 @@ class MemoryObj(metaclass=abc.ABCMeta):
         """
         raise NotImplementedError
 
-@dataclass
-class FreeBlock:
-    """
-    Metadata class used by the memory allocators
-    """
-    start: int
-    size: int
+    @abc.abstractmethod
+    def ref_count_up(self):
+        """
+        Increase ref count for the given MemoryObj by one.
+        """
+        raise NotImplementedError
 
-    def can_be_connected(self, succ: "FreeBlock") -> bool:
-        return self.start + self.size == succ.start
+    @abc.abstractmethod
+    def ref_count_down(self):
+        """
+        Decrease ref count for the given MemoryObj by one.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def get_ref_count(self) -> int:
+        """
+        Get ref count for the given MemoryObj.
+        """
+        raise NotImplementedError
 
 class TensorMemoryObj(MemoryObj):
     """
     Wraps a raw flat tensor with some metadata
     """
 
-    def __init__(self, raw_data: torch.Tensor, metadata: MemoryObjMetadata):
+    def __init__(
+        self,
+        raw_data: torch.Tensor,
+        metadata: MemoryObjMetadata,
+        parent_allocator: Optional["MemoryAllocatorInterface"],
+    ):
+        assert metadata.dtype is not None, "dtype must be specified for TensorMemoryObj"
         self.raw_data = raw_data
         self.meta = metadata
         self.valid = True
+        self.lock = threading.Lock()
+        self.parent_allocator = parent_allocator
 
     @property
     def metadata(self) -> MemoryObjMetadata:
@@ -187,13 +213,102 @@ class TensorMemoryObj(MemoryObj):
     def get_physical_size(self) -> int:
         return self.metadata.phy_size
 
+    def ref_count_up(self):
+        with self.lock:
+            self.meta.ref_count += 1
+
+    def ref_count_down(self):
+        with self.lock:
+            self.meta.ref_count -= 1
+            if self.meta.ref_count < 0:
+                logger.warning(
+                    f"Ref count of MemoryObj {self.meta.address}"
+                    f"is negative: {self.meta.ref_count}."
+                    "Double free occurred somewhere."
+                    "Setting ref count back to 0 as a hack but please find the bug."
+                )
+                self.meta.ref_count = 0
+
+            if (
+                self.meta.ref_count == 0
+                and self.parent_allocator is not None
+                and self.meta.pin_count == 0
+            ):
+                self.parent_allocator.free(self)
+
+    def get_ref_count(self) -> int:
+        with self.lock:
+            return self.meta.ref_count
+
+
+class BytesBufferMemoryObj(MemoryObj):
+    """
+    Wraps a raw flat tensor with some metadata
+    """
+
+    def __init__(self, raw_bytes: bytes, metadata: Optional[MemoryObjMetadata] = None):
+        self.raw_data = raw_bytes
+        if metadata is None:
+            bytes_shape = torch.Size([len(self.raw_data), 0, 0, 0])
+            self.meta = MemoryObjMetadata(shape=bytes_shape, dtype=None, address=0, phy_size=0, ref_count=1, fmt=MemoryFormat.BINARY_BUFFER)
+        else:
+            self.meta = metadata
+        self.valid = True
+
+    def invalidate(self):
+        self.valid = False
+
+    def is_valid(self):
+        return self.valid
+
+    def get_size(self) -> int:
+        return len(self.raw_data)
+
+    def get_shape(self) -> torch.Size:
+        return torch.Size([len(self.raw_data), 0, 0, 0])
+
+    def get_dtype(self) -> Optional[torch.dtype]:
+        return None
+
+    def get_memory_format(self) -> MemoryFormat:
+        return self.metadata.fmt
+
+    def get_physical_size(self) -> int:
+        return self.metadata.phy_size
+
+    @property
+    def metadata(self) -> MemoryObjMetadata:
+        return self.meta
+
+    @property
+    def tensor(self) -> Optional[torch.Tensor]:
+        if not self.valid:
+            logger.warning("Trying to access an invalidated MemoryObj")
+            return None
+        return None
+
+    @property
+    def byte_array(self) -> bytes:
+        return self.raw_data
+
+@dataclass
+class FreeBlock:
+    """
+    Metadata class used by the memory allocators
+    """
+    start: int
+    size: int
+
+    def can_be_connected(self, succ: "FreeBlock") -> bool:
+        return self.start + self.size == succ.start
+
 class MemoryAllocatorInterface(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def allocate(
-            self,
-            shape: Union[torch.Size, Tuple[int, ...]],
-            dtype: Optional[torch.dtype],
-            fmt: MemoryFormat = MemoryFormat.UNDEFINED,
+        self,
+        shape: Union[torch.Size, Tuple[int, ...]],
+        dtype: Optional[torch.dtype],
+        fmt: MemoryFormat = MemoryFormat.UNDEFINED,
     ) -> Optional[MemoryObj]:
         """
         Allocates the memory to hold a tensor of the given shape.
@@ -201,8 +316,7 @@ class MemoryAllocatorInterface(metaclass=abc.ABCMeta):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def dry_allocate(self, shape: torch.Size,
-                     dtype: Optional[torch.dtype]) -> MemoryObjMetadata:
+    def dry_allocate(self, shape: torch.Size, dtype: Optional[torch.dtype]) -> MemoryObjMetadata:
         """
         A 'dry run' allocation that returns the metadata of the
         allocated memory without actually allocating it.
@@ -552,56 +666,6 @@ class GPUMemoryAllocator(MemoryAllocatorInterface):
     ) -> MemoryObjMetadata:
         return self.allocator.dry_allocate(shape, dtype, fmt)
 
-class BytesBufferMemoryObj(MemoryObj):
-    """
-    Wraps a raw flat tensor with some metadata
-    """
-
-    def __init__(self, raw_bytes: bytes, metadata: Optional[MemoryObjMetadata] = None):
-        self.raw_data = raw_bytes
-        if metadata is None:
-            bytes_shape = torch.Size([len(self.raw_data), 0, 0, 0])
-            self.meta = MemoryObjMetadata(shape=bytes_shape, dtype=None, address=0, phy_size=0, ref_count=1, fmt=MemoryFormat.BINARY_BUFFER)
-        else:
-            self.meta = metadata
-        self.valid = True
-
-    def invalidate(self):
-        self.valid = False
-
-    def is_valid(self):
-        return self.valid
-
-    def get_size(self) -> int:
-        return len(self.raw_data)
-
-    def get_shape(self) -> torch.Size:
-        return torch.Size([len(self.raw_data), 0, 0, 0])
-
-    def get_dtype(self) -> Optional[torch.dtype]:
-        return None
-
-    def get_memory_format(self) -> MemoryFormat:
-        return self.metadata.fmt
-
-    def get_physical_size(self) -> int:
-        return self.metadata.phy_size
-
-    @property
-    def metadata(self) -> MemoryObjMetadata:
-        return self.meta
-
-    @property
-    def tensor(self) -> Optional[torch.Tensor]:
-        if not self.valid:
-            logger.warning("Trying to access an invalidated MemoryObj")
-            return None
-        return None
-
-    @property
-    def byte_array(self) -> bytes:
-        return self.raw_data
-
 class BufferAllocator(MemoryAllocatorInterface):
     """Allocates memory in the pre-allocated pinned memory.
     """
@@ -649,6 +713,9 @@ class MixedMemoryAllocator(MemoryAllocatorInterface):
         self.pin_allocator = TensorMemoryAllocator(buffer)
         self.buffer_allocator = BufferAllocator("cpu")
         self.host_mem_lock = threading.Lock()
+
+    def __str__(self):
+        return "MixedMemoryAllocator"
 
     def allocate(self, shape: Union[torch.Size, Tuple[int, ...]], dtype: Optional[torch.dtype], fmt: MemoryFormat = MemoryFormat.KV_BLOB) -> Optional[MemoryObj]:
         if fmt == MemoryFormat.BINARY_BUFFER:
@@ -710,3 +777,88 @@ class MixedMemoryAllocator(MemoryAllocatorInterface):
     def memcheck(self):
         with self.host_mem_lock:
             return self.pin_allocator.memcheck()
+
+    def close(self):
+        pass
+
+class AdHocMemoryAllocator(MemoryAllocatorInterface):
+    """
+    AdHocMemoryAllocator is a simple allocator that does not actually
+    allocate memory. It is used for testing purposes only.
+    """
+    def __init__(self, device: str = "cpu"):
+        """
+        :param str device: The device of the ad hoc memory allocator.
+        """
+        if not torch.cuda.is_available():
+            self.device = "cpu"
+        else:
+            self.device = device
+
+    def __str__(self):
+        return "AdHocMemoryAllocator"
+
+    @_lmcache_nvtx_annotate
+    def allocate(
+        self,
+        shape: Union[torch.Size, Tuple[int, ...]],
+        dtype: Optional[torch.dtype],
+        fmt: MemoryFormat = MemoryFormat.KV_2LTD,
+        allocator_type: Optional[str] = None,
+    ) -> Optional[MemoryObj]:
+        """
+        Returns a dummy MemoryObj for testing purposes.
+        """
+        if not isinstance(shape, torch.Size):
+            shape = torch.Size(shape)
+
+        assert dtype is not None, "dtype must be specified"
+
+        # Return a dummy object with no actual memory allocation
+        return TensorMemoryObj(
+            raw_data=torch.empty(shape, dtype=dtype, device=self.device),
+            metadata=MemoryObjMetadata(
+                shape=shape,
+                dtype=dtype,
+                address=0,
+                phy_size=0,
+                ref_count=1,
+                pin_count=0,
+                fmt=fmt,
+            ),
+            parent_allocator=self,
+        )
+
+    @_lmcache_nvtx_annotate
+    def batched_allocate(
+        self,
+        shape: Union[torch.Size, Tuple[int, ...]],
+        dtype: Optional[torch.dtype],
+        batch_size: int,
+        fmt: MemoryFormat = MemoryFormat.KV_2LTD,
+        allocator_type: Optional[str] = None,
+    ) -> Optional[List[MemoryObj]]:
+        raise NotImplementedError("Batched allocation is not supported in AdHocMemoryAllocator")
+
+    def free(self, memory_obj: MemoryObj, allocator_type: Optional[str] = None):
+        pass
+
+    def batched_free(
+        self,
+        memory_objs: List[MemoryObj],
+        allocator_type: Optional[str] = None,
+        update_stats: bool = True,
+    ):
+        pass
+
+    def ref_count_up(self, memory_obj: MemoryObj):
+        pass
+
+    def ref_count_down(self, memory_obj: MemoryObj):
+        pass
+
+    def get_ref_count(self, memory_obj: MemoryObj):
+        return 0
+
+    def memcheck(self):
+        return True

@@ -44,7 +44,7 @@ class CacheEngineKey:
     model_name: str
     world_size: int
     worker_id: int
-    chunk_hash: str
+    chunk_hash: int
     request_configs: Optional[dict] = None
 
     def to_string(self):

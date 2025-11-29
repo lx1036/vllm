@@ -4,6 +4,9 @@ import yaml
 import re
 import torch
 
+blend_default_separator = "[BLEND_SEP]"
+
+
 @dataclass
 class LMCacheEngineConfig:
     chunk_size: int
@@ -24,7 +27,13 @@ class LMCacheEngineConfig:
     enable_blending: bool  # whether to enable blending
     blend_recompute_ratio: float  # the ratio of blending recompute
     blend_min_tokens: int  # the minimum number of tokens for blending
+    blend_separator: str = "" # the separator for blending
+    blend_add_special_in_precomp: bool = False
     blend_special_str: str = " # # "  # the separator for blending
+
+    pipelined_backend: bool = False
+    max_local_cache_size: int = 0
+    local_device: Optional[str] = None
 
     # P2P related configurations
     enable_p2p: bool = False  # whether to enable peer-to-peer sharing
@@ -234,6 +243,37 @@ class LMCacheEngineConfig:
                                    blend_min_tokens, blend_special_str,
                                    enable_p2p, lookup_url, distributed_url,
                                    error_handling).validate()
+
+    @staticmethod
+    def from_defaults(
+            chunk_size: int = 256,
+            local_device: str = "cuda",
+            max_local_cache_size: int = 5,
+            remote_url: Optional[str] = "redis://localhost:6379",
+            remote_serde: Optional[str] = "torch",
+            pipelined_backend: bool = False,
+            save_decode_cache: bool = False,
+            enable_blending: bool = False,
+            blend_recompute_ratio: float = 0.15,
+            blend_min_tokens: int = 256,
+            blend_separator: str = blend_default_separator,
+            blend_add_special_in_precomp: bool = False,
+    ) -> "LMCacheEngineConfig":
+        return LMCacheEngineConfig(
+            chunk_size=chunk_size,
+            local_device=local_device,
+            max_local_cache_size=max_local_cache_size,
+            remote_url=remote_url,
+            remote_serde=remote_serde,
+            pipelined_backend=pipelined_backend,
+            save_decode_cache=save_decode_cache,
+            enable_blending=enable_blending,
+            blend_recompute_ratio=blend_recompute_ratio,
+            blend_min_tokens=blend_min_tokens,
+            blend_separator=blend_separator,
+            blend_add_special_in_precomp=blend_add_special_in_precomp,
+        )
+
 
     def validate(self) -> 'LMCacheEngineConfig':
         """Validate the config

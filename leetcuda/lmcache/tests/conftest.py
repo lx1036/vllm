@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import pytest
 
 from leetcuda.lmcache.cache_engine import LMCacheEngineBuilder
+from leetcuda.lmcache.memory_management import MixedMemoryAllocator
 
 
 @dataclass
@@ -95,3 +96,32 @@ def autorelease_experimental(request):
     # Cleanup all objects created by the factory
     #for obj in objects:
     #    obj.close()
+
+
+@pytest.fixture(scope="session")
+def memory_allocator():
+    """
+    One MixedMemoryAllocator (5GB) for the whole test session;
+    .close() is a no-op per-test.
+    """
+    _real = MixedMemoryAllocator(5 * 1024 * 1024 * 1024)  # 5GB
+
+    class _NoCloseWrapper:
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def close(self):
+            # No-op so per-test close() calls don't shut down the shared allocator
+            pass
+
+    try:
+        yield _NoCloseWrapper(_real)
+    finally:
+        # Actually close once when the session ends
+        _real.close()
+
+
+

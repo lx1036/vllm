@@ -263,7 +263,7 @@ class KVEvictMsg(WorkerMsg):
     # TODO(Jiayi): instance_id can be replaced with url
     instance_id: str
     worker_id: int
-    key: str
+    key: int
     location: str
 
     def describe(self) -> str:

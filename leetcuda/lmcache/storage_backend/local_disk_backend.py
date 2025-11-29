@@ -16,7 +16,7 @@ from leetcuda.lmcache.log import init_logger
 from leetcuda.lmcache.lookup_server.abstract_server import LookupServerInterface
 from leetcuda.lmcache.memory_management import MemoryAllocatorInterface, MemoryObj
 from leetcuda.lmcache.observability import LMCStatsMonitor
-from leetcuda.lmcache.storage_backend.abstract_backend import StorageBackendInterface
+from leetcuda.lmcache.storage_backend.base_backend import StorageBackendInterface
 from leetcuda.lmcache.storage_backend.evictor.base_evictor import PutStatus
 from leetcuda.lmcache.utils import DiskCacheMetadata, CacheEngineKey, _lmcache_nvtx_annotate
 from leetcuda.lmcache.storage_backend.evictor.lru_evictor import LRUEvictor

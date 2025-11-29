@@ -1,7 +1,7 @@
 import pytest
 
 from leetcuda.lmcache.config import LMCacheEngineConfig
-from leetcuda.lmcache.tests.utils import dumb_metadata, generate_tokens
+from leetcuda.lmcache.tests.utils import create_engine_metadata, generate_tokens
 from leetcuda.lmcache.token_database import ChunkedTokenDatabase
 
 import torch
@@ -12,7 +12,7 @@ def test_chunked_token_database(chunk_length):
     tokens = generate_tokens(test_length, "cpu")
 
     cfg = LMCacheEngineConfig.from_legacy(chunk_size=chunk_length, backend="cpu")
-    metadata = dumb_metadata()
+    metadata = create_engine_metadata()
     db = ChunkedTokenDatabase(cfg, metadata)
     # Process without mask
     original_results = list(db.process_tokens(tokens))

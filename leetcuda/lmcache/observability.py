@@ -1,7 +1,7 @@
 import threading
 import time
 from dataclasses import dataclass
-from typing import List, Union, Dict
+from typing import List, Union, Dict, Optional
 
 from leetcuda.lmcache.config import LMCacheEngineMetadata
 from leetcuda.lmcache.log import init_logger
@@ -36,61 +36,61 @@ class LMCacheStats:
     store_speed: List[float]  # Tokens per second
 
 class PrometheusLogger:
-    _gauge_cls = prometheus_client.Gauge
-    _counter_cls = prometheus_client.Counter
-    _histogram_cls = prometheus_client.Histogram
+    gauge_cls = prometheus_client.Gauge
+    counter_cls = prometheus_client.Counter
+    histogram_cls = prometheus_client.Histogram
 
-    _instance = None
+    instance = None
 
     def __init__(self, metadata: LMCacheEngineMetadata):
         self.metadata = metadata
 
-        self.labels = self._metadata_to_labels(metadata)
+        self.labels = self.metadata_to_labels(metadata)
         labelnames = list(self.labels.keys())
 
-        self.counter_num_retrieve_requests = self._counter_cls(
+        self.counter_num_retrieve_requests = self.counter_cls(
             name="lmcache:num_retrieve_requests",
             documentation="Total number of retrieve requests sent to lmcache",
             labelnames=labelnames,
         )
 
-        self.counter_num_store_requests = self._counter_cls(
+        self.counter_num_store_requests = self.counter_cls(
             name="lmcache:num_store_requests",
             documentation="Total number of store requests sent to lmcache",
             labelnames=labelnames,
         )
 
-        self.counter_num_requested_tokens = self._counter_cls(
+        self.counter_num_requested_tokens = self.counter_cls(
             name="lmcache:num_requested_tokens",
             documentation="Total number of tokens requested from lmcache",
             labelnames=labelnames,
         )
 
-        self.counter_num_hit_tokens = self._counter_cls(
+        self.counter_num_hit_tokens = self.counter_cls(
             name="lmcache:num_hit_tokens",
             documentation="Total number of tokens hit in lmcache",
             labelnames=labelnames,
         )
 
-        self.gauge_cache_hit_rate = self._gauge_cls(
+        self.gauge_cache_hit_rate = self.gauge_cls(
             name="lmcache:cache_hit_rate",
             documentation="Cache hit rate of lmcache since last log",
             labelnames=labelnames,
             multiprocess_mode="livemostrecent")
 
-        self.gauge_local_cache_usage = self._gauge_cls(
+        self.gauge_local_cache_usage = self.gauge_cls(
             name="lmcache:local_cache_usage",
             documentation="Local cache usage (bytes) of lmcache",
             labelnames=labelnames,
             multiprocess_mode="sum")
 
-        self.gauge_remote_cache_usage = self._gauge_cls(
+        self.gauge_remote_cache_usage = self.gauge_cls(
             name="lmcache:remote_cache_usage",
             documentation="Remote cache usage (bytes) of lmcache",
             labelnames=labelnames,
             multiprocess_mode="sum")
 
-        self.gauge_local_storage_usage = self._gauge_cls(
+        self.gauge_local_storage_usage = self.gauge_cls(
             name="lmcache:local_storage_usage",
             documentation="Local storage usage (bytes) of lmcache",
             labelnames=labelnames,
@@ -100,7 +100,7 @@ class PrometheusLogger:
             0.001, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.25, 0.5, 0.75,
             1.0, 2.5, 5.0, 7.5, 10.0
         ]
-        self.histogram_time_to_retrieve = self._histogram_cls(
+        self.histogram_time_to_retrieve = self.histogram_cls(
             name="lmcache:time_to_retrieve",
             documentation="Time to retrieve from lmcache (seconds)",
             labelnames=labelnames,
@@ -111,7 +111,7 @@ class PrometheusLogger:
             0.001, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.25, 0.5, 0.75,
             1.0, 2.5, 5.0, 7.5, 10.0
         ]
-        self.histogram_time_to_store = self._histogram_cls(
+        self.histogram_time_to_store = self.histogram_cls(
             name="lmcache:time_to_store",
             documentation="Time to store to lmcache (seconds)",
             labelnames=labelnames,
@@ -122,7 +122,7 @@ class PrometheusLogger:
             1, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384,
             32768, 65536
         ]
-        self.histogram_retrieve_speed = self._histogram_cls(
+        self.histogram_retrieve_speed = self.histogram_cls(
             name="lmcache:retrieve_speed",
             documentation="Retrieve speed of lmcache (tokens per second)",
             labelnames=labelnames,
@@ -133,60 +133,92 @@ class PrometheusLogger:
             1, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384,
             32768, 65536
         ]
-        self.histogram_store_speed = self._histogram_cls(
+        self.histogram_store_speed = self.histogram_cls(
             name="lmcache:store_speed",
             documentation="Store speed of lmcache (tokens per second)",
             labelnames=labelnames,
             buckets=store_speed_buckets,
         )
 
-    @staticmethod
-    def GetOrCreate(metadata: LMCacheEngineMetadata) -> "PrometheusLogger":
-        if PrometheusLogger._instance is None:
-            PrometheusLogger._instance = PrometheusLogger(metadata)
-        #assert PrometheusLogger._instance.metadata == metadata, \
-        #    "PrometheusLogger instance already created with different metadata"
-        if PrometheusLogger._instance.metadata != metadata:
-            logger.error("PrometheusLogger instance already created with different metadata. This should not happen except in test")
-        return PrometheusLogger._instance
+        """
+        Dynamically get value by lambda function while capture
+        """
+        self.local_cpu_hot_cache_count = self.gauge_cls(
+            name="lmcache:local_cpu_hot_cache_count",
+            documentation="The size of the hot_cache",
+            labelnames=labelnames,
+            multiprocess_mode="livemostrecent",
+        ).labels(**self.labels)
+        self.local_cpu_keys_in_request_count = self.gauge_cls(
+            name="lmcache:local_cpu_keys_in_request_count",
+            documentation="The size of the keys_in_request",
+            labelnames=labelnames,
+            multiprocess_mode="livemostrecent",
+        ).labels(**self.labels)
+        self.remote_put_task_num = self.gauge_cls(
+            name="lmcache:remote_put_task_num",
+            documentation="The number of remote put tasks",
+            labelnames=labelnames,
+            multiprocess_mode="livemostrecent",
+        ).labels(**self.labels)
 
     @staticmethod
-    def _metadata_to_labels(metadata: LMCacheEngineMetadata):
+    def GetOrCreate(metadata: LMCacheEngineMetadata) -> "PrometheusLogger":
+        if PrometheusLogger.instance is None:
+            PrometheusLogger.instance = PrometheusLogger(metadata)
+        #assert PrometheusLogger._instance.metadata == metadata, \
+        #    "PrometheusLogger instance already created with different metadata"
+        if PrometheusLogger.instance.metadata != metadata:
+            logger.error("PrometheusLogger instance already created with different metadata. This should not happen except in test")
+        return PrometheusLogger.instance
+
+    @staticmethod
+    def GetInstanceOrNone() -> Optional["PrometheusLogger"]:
+        """
+        Returns the singleton instance of PrometheusLogger if it exists,
+        otherwise returns None.
+        """
+        return PrometheusLogger.instance
+
+    @staticmethod
+    def metadata_to_labels(metadata: LMCacheEngineMetadata):
         return {
             "model_name": metadata.model_name,
             "worker_id": metadata.worker_id
         }
 
     def log_prometheus(self, stats: LMCacheStats):
-        self._log_counter(self.counter_num_retrieve_requests, stats.num_retrieve_requests)
-        self._log_counter(self.counter_num_store_requests, stats.num_store_requests)
-        self._log_counter(self.counter_num_requested_tokens, stats.num_requested_tokens)
-        self._log_counter(self.counter_num_hit_tokens, stats.num_hit_tokens)
-        self._log_gauge(self.gauge_cache_hit_rate, stats.cache_hit_rate)
-        self._log_gauge(self.gauge_local_cache_usage, stats.local_cache_usage_bytes)
-        self._log_gauge(self.gauge_remote_cache_usage, stats.remote_cache_usage_bytes)
-        self._log_gauge(self.gauge_local_storage_usage, stats.local_storage_usage_bytes)
-        self._log_histogram(self.histogram_time_to_retrieve, stats.time_to_retrieve)
-        self._log_histogram(self.histogram_time_to_store, stats.time_to_store)
-        self._log_histogram(self.histogram_retrieve_speed, stats.retrieve_speed)
-        self._log_histogram(self.histogram_store_speed, stats.store_speed)
+        self.log_counter(self.counter_num_retrieve_requests, stats.num_retrieve_requests)
+        self.log_counter(self.counter_num_store_requests, stats.num_store_requests)
+        self.log_counter(self.counter_num_requested_tokens, stats.num_requested_tokens)
+        self.log_counter(self.counter_num_hit_tokens, stats.num_hit_tokens)
+        self.log_gauge(self.gauge_cache_hit_rate, stats.cache_hit_rate)
+        self.log_gauge(self.gauge_local_cache_usage, stats.local_cache_usage_bytes)
+        self.log_gauge(self.gauge_remote_cache_usage, stats.remote_cache_usage_bytes)
+        self.log_gauge(self.gauge_local_storage_usage, stats.local_storage_usage_bytes)
+        self.log_histogram(self.histogram_time_to_retrieve, stats.time_to_retrieve)
+        self.log_histogram(self.histogram_time_to_store, stats.time_to_store)
+        self.log_histogram(self.histogram_retrieve_speed, stats.retrieve_speed)
+        self.log_histogram(self.histogram_store_speed, stats.store_speed)
 
 
-    def _log_counter(self, counter, data: Union[int, float]) -> None:
+    def log_counter(self, counter, data: Union[int, float]) -> None:
         # Convenience function for logging to counter.
         # Prevent ValueError from negative increment
         if data < 0:
             return
         counter.labels(**self.labels).inc(data)
 
-    def _log_gauge(self, gauge, data: Union[int, float]) -> None:
+    def log_gauge(self, gauge, data: Union[int, float]) -> None:
         # Convenience function for logging to gauge.
         gauge.labels(**self.labels).set(data)
 
-    def _log_histogram(self, histogram, data: Union[List[int], List[float]]) -> None:
+    def log_histogram(self, histogram, data: Union[List[int], List[float]]) -> None:
         # Convenience function for logging to histogram.
         for value in data:
             histogram.labels(**self.labels).observe(value)
+
+
 
 
 @dataclass
