@@ -2,7 +2,7 @@ import abc
 from collections.abc import MutableMapping
 from typing import Generic, TypeVar, Any
 
-from leetcuda.lmcache.utils import CacheEngineKey
+from leetcuda.lmcache.types import CacheEngineKey
 
 TCache = TypeVar("TCache", bound=MutableMapping[CacheEngineKey, Any])
 
