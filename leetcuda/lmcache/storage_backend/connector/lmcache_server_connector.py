@@ -5,7 +5,7 @@ from typing import Optional, List, no_type_check
 from leetcuda.lmcache.log import init_logger
 from leetcuda.lmcache.memory_management import MemoryAllocatorInterface, MemoryFormat, MemoryObj
 from leetcuda.lmcache.protocol import ClientMetaMessage, ServerMetaMessage, Constants
-from leetcuda.lmcache.storage_backend.connector.abstract_connector import RemoteConnector
+from leetcuda.lmcache.storage_backend.connector.base_connector import RemoteConnector
 from leetcuda.lmcache.utils import CacheEngineKey, _lmcache_nvtx_annotate
 
 import torch

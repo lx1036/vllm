@@ -2,7 +2,7 @@ from typing import Optional, List, no_type_check
 
 from leetcuda.lmcache.log import init_logger
 from leetcuda.lmcache.memory_management import MemoryAllocatorInterface, MemoryObj
-from leetcuda.lmcache.storage_backend.connector.abstract_connector import RemoteConnector
+from leetcuda.lmcache.storage_backend.connector.base_connector import RemoteConnector
 from leetcuda.lmcache.utils import CacheEngineKey
 
 logger = init_logger(__name__)

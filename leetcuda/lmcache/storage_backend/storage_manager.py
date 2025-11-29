@@ -1,6 +1,6 @@
 import asyncio
 import threading
-from typing import Optional, OrderedDict, List, Dict, Tuple
+from typing import Optional, OrderedDict, List, Dict, Tuple, Sequence
 
 from leetcuda.lmcache.cache_controller.worker import LMCacheWorker
 from leetcuda.lmcache.config import LMCacheEngineMetadata, LMCacheEngineConfig
@@ -10,6 +10,7 @@ from leetcuda.lmcache.storage_backend.base_backend import StorageBackendInterfac
 from leetcuda.lmcache.storage_backend.local_disk_backend import LocalDiskBackend
 from leetcuda.lmcache.storage_backend.remote_backend import RemoteBackend
 from leetcuda.lmcache.log import init_logger
+from leetcuda.lmcache.storage_backend.base_storage import AllocatorBackendInterface
 from leetcuda.lmcache.utils import CacheEngineKey
 
 import torch
@@ -58,12 +59,12 @@ class StorageManager:
     """
 
     def __init__(self,
-                 config: LMCacheEngineConfig,
-                 metadata: LMCacheEngineMetadata,
-                 allocator: MemoryAllocatorInterface,
-                 lmcache_worker: Optional["LMCacheWorker"] = None,
-                 lookup_server: Optional[LookupServerInterface] = None
-                 ):
+         config: LMCacheEngineConfig,
+         metadata: LMCacheEngineMetadata,
+         allocator: MemoryAllocatorInterface,
+         lmcache_worker: Optional["LMCacheWorker"] = None,
+         lookup_server: Optional[LookupServerInterface] = None
+    ):
 
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever)
@@ -80,24 +81,55 @@ class StorageManager:
 
         self.manager_lock = threading.Lock()
 
+        self.allocator_backend = self.get_allocator_backend(config)
+        self.enable_pd = config.enable_pd
 
 
 
 
-    def put(self, key: CacheEngineKey, memory_obj: MemoryObj):
-        """
-        Non-blocking function to put the memory object into the storages.
-        Do not store if the same object is being stored (handled here by
-        storage manager) or has been stored (handled by storage backend).
-        """
-        self.manager_lock.acquire()
+    def get_allocator_backend(self, config: LMCacheEngineConfig) -> AllocatorBackendInterface:
+        if self.enable_pd:
+            allocator_backend = self.storage_backends["PDBackend"]
+        else:
+            allocator_backend = self.storage_backends["LocalCPUBackend"]
+        assert isinstance(allocator_backend, AllocatorBackendInterface)
+        return allocator_backend
+
+
+    def batched_put(
+        self,
+        keys: Sequence[CacheEngineKey],
+        memory_objs: List[MemoryObj],
+        transfer_spec=None,
+        location: Optional[str] = None,
+    ) -> None:
+        obj_dict: dict[
+            str,
+            tuple[Sequence[CacheEngineKey], list[MemoryObj]],
+        ] = {}
+        obj_dict[self.allocator_backend.__class__.__name__] = (
+            keys,
+            memory_objs,
+        )
 
         for backend_name, backend in self.storage_backends.items():
-            put_task = backend.submit_put_task(key, memory_obj)
-            if put_task is None:
+            if location and backend_name != location:
                 continue
 
+            allocator_backend = backend.get_allocator_backend()
+            cname = allocator_backend.__class__.__name__
+            if cname not in obj_dict:
+                new_keys, new_objs = allocate_and_copy_objects(allocator_backend, keys, memory_objs, self.internal_copy_stream)
+                obj_dict[cname] = (new_keys, new_objs)
 
+            # NOTE: the handling of exists_in_put_tasks
+            # is done in the backend
+            ks, objs = obj_dict[cname]
+            backend.batched_submit_put_task(ks, objs, transfer_spec=transfer_spec)
+
+        for cname, (ks, objs) in obj_dict.items():
+            for memory_obj in objs:
+                memory_obj.ref_count_down()
 
 
     def get(self, key: CacheEngineKey) -> Optional[MemoryObj]:

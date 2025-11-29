@@ -1,4 +1,5 @@
-from typing import Optional, Dict, List, Union, Tuple
+import time
+from typing import Optional, Dict, List, Union, Tuple, Generator
 
 import torch
 
@@ -44,27 +45,190 @@ class LMCacheEngine:
 
     @_lmcache_nvtx_annotate
     @torch.inference_mode()
-    def store(self, tokens: torch.Tensor, mask: Optional[torch.Tensor] = None, **kwargs):
+    def store(
+        self,
+        tokens: torch.Tensor,
+        hashes: Optional[List[int]] = None,
+        offsets: Optional[List[int]] = None,
+        mask: Optional[torch.Tensor] = None,
+        **kwargs,
+    ):
+        """
+        Store the tokens/hashes and mask into the cache engine.
+        :param tokens:
+        :param mask:
+        :param kwargs:
+        :return:
+        """
+        if self.is_passive():
+            logger.debug(f"rank={self.metadata.worker_id} ignore store")
+            return
 
+        if mask is not None:
+            num_to_store_tokens = torch.sum(mask).item()
+        elif tokens is not None:
+            num_to_store_tokens = len(tokens)
+        elif hashes is not None:
+            assert offsets is not None, "Offsets should be set when hashes are provided during store"
+            num_to_store_tokens = sum(offsets)
+            kwargs["slot_mapping"] = torch.tensor(kwargs["slot_mapping"], dtype=torch.long, device="cuda")
 
-        for start, end, key in self.token_database.process_tokens(tokens, mask):
-            if self.storage_manager.contains(key):
-                continue
+        assert tokens is not None or hashes is not None, "Either 'tokens' or 'hashes' must be provided."
 
-            memory_obj = self.storage_manager.allocate(kv_shape, kv_dtype)
+        monitor_req_id = self.stats_monitor.on_store_request(num_to_store_tokens)
+        starts = []
+        ends = []
+        keys = []
+        memory_objs = []
+        offload_time = 0.0
+        put_time = 0.0
+        tot_kv_size = 0
+        tot_token_num = 0
+        t = time.perf_counter()
+
+        request_configs = kwargs.get("request_configs")
+        if request_configs is not None and len(request_configs) != 0:
+            assert isinstance(request_configs, dict)
+
+        for start, end, key in self.token_database.process_tokens(tokens, hashes, offsets, mask, request_configs=request_configs,):
+            assert isinstance(key, CacheEngineKey)
+            # Allocate the memory object
+            num_tokens = end - start
+            kv_shape = self.gpu_connector.get_shape(num_tokens)
+            kv_dtype = self.metadata.kv_dtype
+            # TODO (Jiayi): should be batched in the future
+            memory_obj = self.storage_manager.allocate(kv_shape, kv_dtype, busy_loop=self.force_store_wait)
             if memory_obj is None:
-                logger.warning("Failed to allocate memory for the KV cache. The KV cache will not be stored.")
+                logger.warning("Local cpu memory under pressure so choosing to not store the KV cache.")
                 break
 
-            self.gpu_connector.from_gpu(memory_obj, start, end, **kwargs)
-            self.storage_manager.put(key, memory_obj)
+            starts.append(start)
+            ends.append(end)
+            keys.append(key)
+            memory_objs.append(memory_obj)
+            tot_kv_size += memory_obj.get_size()
+            tot_token_num += num_tokens
 
-    def store_distributed(self,tokens: torch.Tensor, mask: Optional[torch.Tensor] = None, **kwargs) -> None:
+        # memory_objs might be empty, directly return to avoid sending tokens
+        if not memory_objs:
+            return
+        self.gpu_connector.batched_from_gpu(memory_objs, starts, ends, **kwargs)
+        offload_time += time.perf_counter() - t
+        t = time.perf_counter()
+        transfer_spec = kwargs.get("transfer_spec", None)
+        self.storage_manager.batched_put(keys, memory_objs, transfer_spec=transfer_spec)
+        put_time += time.perf_counter() - t
+        tot_time = offload_time + put_time
+        logger.info(
+            "Stored %d out of total %d tokens. size: %.4f gb, cost %.4f ms, "
+            "throughput: %.4f GB/s; offload_time: %.4f ms, put_time: %.4f ms",
+            tot_token_num,
+            num_to_store_tokens,
+            tot_kv_size / 1024**3,
+            tot_time * 1000,
+            tot_kv_size / tot_time / 1024**3,
+            offload_time * 1000,
+            put_time * 1000,
+        )
 
+        self.stats_monitor.on_store_finished(monitor_req_id, tot_token_num)
 
-        self.storage_manager.commit_put()
+    @_lmcache_nvtx_annotate
+    @torch.inference_mode()
+    def store_layer(
+            self,
+            tokens: Union[torch.Tensor, list[int]],
+            mask: Optional[torch.Tensor] = None,
+            **kwargs,
+    ) -> Generator[None, None, None]:
+        """
+        Store the KV cache in a layerwise manner.
 
+        :param tokens:
+        :param mask:
+        :param kwargs:
+        :return: A generator that yields None. In the first iteration, the
+            generator allocates the memory objects for all layers and moves
+            the KV cache of the first layer from GPU to CPU. In the next
+            iterations, it moves the KV cache of layer i from GPU to the memory
+            objects (on CPU) and puts the memory objects of layer i-1 to the
+            storage backends. In the last iteration, it puts the memory objects
+            of the last layer to the storage backends.
+        """
+        if mask is not None:
+            num_to_store_tokens = torch.sum(mask).item()
+        else:
+            num_to_store_tokens = len(tokens)
+        monitor_req_id = self.stats_monitor.on_store_request(num_to_store_tokens)
 
+        starts = []
+        ends = []
+        keys = []
+        memory_objs = []
+        tot_token_num = 0
+        kv_dtype = self.metadata.kv_dtype
+        request_configs = kwargs.get("request_configs")
+        if request_configs is not None and len(request_configs) != 0:
+            assert isinstance(request_configs, dict)
+
+        for start, end, key in self.token_database.process_tokens(tokens=tokens, mask=mask, request_configs=request_configs):
+            assert isinstance(key, CacheEngineKey)
+
+            keys_multi_layer = key.split_layers(self.num_layers)
+            # Only check the first layer
+            if self.storage_manager.contains(keys_multi_layer[0]):
+                continue
+
+            # Allocate the memory object
+            num_tokens = end - start
+            kv_shape_single_layer = self.gpu_connector.get_shape(num_tokens)
+            memory_objs_multi_layer = self.storage_manager.batched_allocate(
+                kv_shape_single_layer,
+                kv_dtype,
+                batch_size=self.num_layers,
+                fmt=self.fmt,
+                busy_loop=self.force_store_wait,
+            )
+
+            if memory_objs_multi_layer is None:
+                logger.warning("Local cpu memory under pressure so choosing to not store the KV cache.")
+                break
+
+            starts.append(start)
+            ends.append(end)
+            keys.append(keys_multi_layer)
+            memory_objs.append(memory_objs_multi_layer)
+            tot_token_num += num_tokens
+
+        if keys:
+            # Transpose the keys and memory objects into layer major format
+            memory_objs = [list(row) for row in zip(*memory_objs, strict=False)]
+            keys = [list(row) for row in zip(*keys, strict=False)]
+
+            assert isinstance(
+                self.gpu_connector,
+                (
+                    VLLMPagedMemLayerwiseGPUConnector,
+                    VLLMBufferLayerwiseGPUConnector,
+                    SGLangLayerwiseGPUConnector,
+                ),
+            )
+
+            mem_obj_generator = self.gpu_connector.batched_from_gpu(memory_objs, starts, ends, **kwargs)
+            next(mem_obj_generator)
+            for layer_id in range(self.num_layers):
+                yield
+                next(mem_obj_generator)
+                self.storage_manager.batched_put(keys[layer_id], memory_objs[layer_id])
+        else:
+            # If no cache are found, we still need to yield to avoid
+            # `StopIteration`
+            for layer_id in range(self.num_layers):
+                yield
+
+        self.stats_monitor.on_store_finished(monitor_req_id, tot_token_num)
+        logger.debug(f"Stored {tot_token_num} out of total {len(tokens)} tokens")
+        yield
 
 
     def lookup(self, tokens: Union[torch.Tensor, List[int]], search_range: Optional[List[str]] = None) -> int:
@@ -84,7 +248,12 @@ class LMCacheEngine:
         return end
 
 
-
+    def is_passive(self):
+        """
+        A 'passive' CacheEngine means that the node itself will not store/retrieve
+        the data directly, but from the "active" worker (i.e., rank 0 in MLA)
+        """
+        return self.save_only_first_rank and not self.metadata.is_first_rank()
 
     def close(self) -> None:
         logger.info("LMCacheEngine closed.")

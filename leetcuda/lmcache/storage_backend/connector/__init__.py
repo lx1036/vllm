@@ -7,7 +7,7 @@ from typing import List, Dict, Optional
 
 from leetcuda.lmcache.log import init_logger
 from leetcuda.lmcache.memory_management import MemoryObj, MemoryAllocatorInterface
-from leetcuda.lmcache.storage_backend.connector.abstract_connector import RemoteConnector
+from leetcuda.lmcache.storage_backend.connector.base_connector import RemoteConnector
 from leetcuda.lmcache.storage_backend.connector.blackhole_connector import BlackholeConnector
 from leetcuda.lmcache.storage_backend.connector.lmcache_server_connector import LMCServerConnector
 from leetcuda.lmcache.storage_backend.connector.redis_connector import RedisConnector
