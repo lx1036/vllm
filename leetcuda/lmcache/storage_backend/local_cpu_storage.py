@@ -124,12 +124,12 @@ class LocalCPUBackend(AllocatorBackendInterface):
 
     @_lmcache_nvtx_annotate
     def allocate(
-            self,
-            shape: torch.Size,
-            dtype: torch.dtype,
-            fmt: Optional[MemoryFormat] = None,
-            eviction: bool = True,
-            busy_loop: bool = True,
+        self,
+        shape: torch.Size,
+        dtype: torch.dtype,
+        fmt: Optional[MemoryFormat] = None,
+        eviction: bool = True,
+        busy_loop: bool = True,
     ) -> Optional[MemoryObj]:
         """
         Allocate a memory object of shape and dtype
@@ -137,9 +137,7 @@ class LocalCPUBackend(AllocatorBackendInterface):
         local_cpu_backend.allocate() to get memory objects
         regardless of whether local_cpu is True or False
         """
-        logger.debug(
-            f"Allocating memory in local cpu backend with busy loop: {busy_loop}"
-        )
+        logger.debug(f"Allocating memory in local cpu backend with busy loop: {busy_loop}")
         if fmt is None:
             if self.layerwise:
                 if self.enable_blending:
@@ -165,7 +163,7 @@ class LocalCPUBackend(AllocatorBackendInterface):
                 evict_keys = None
                 with self.cpu_lock:
                     evict_keys = self.cache_policy.get_evict_candidates(self.hot_cache, num_candidates=num_candidates)
-                    if evict_keys:
+                    if len(evict_keys) != 0:
                         # we can continue trying to evict from the hot_cache
                         # and don't need to wait for other requests yet
                         wait_other_requests = False

@@ -31,6 +31,8 @@ class LMCacheEngineConfig:
     blend_add_special_in_precomp: bool = False
     blend_special_str: str = " # # "  # the separator for blending
 
+    cache_policy: str = "LRU"
+
     pipelined_backend: bool = False
     max_local_cache_size: int = 0
     local_device: Optional[str] = None
@@ -97,6 +99,8 @@ class LMCacheEngineConfig:
 
         save_decode_cache = config.get("save_decode_cache", False)
 
+        cache_policy = config.get("cache_policy", "LRU")
+
         enable_blending = config.get("enable_blending", False)
         blend_recompute_ratio = config.get("blend_recompute_ratio", 0.15)
         blend_min_tokens = config.get("blend_min_tokens", 256)
@@ -153,6 +157,7 @@ class LMCacheEngineConfig:
             remote_url=remote_url,
             remote_serde=remote_serde,
             save_decode_cache=save_decode_cache,
+            cache_policy=cache_policy,
             enable_blending=enable_blending,
             blend_recompute_ratio=blend_recompute_ratio,
             blend_min_tokens=blend_min_tokens,
@@ -182,20 +187,20 @@ class LMCacheEngineConfig:
 
     @staticmethod
     def from_legacy(
-            chunk_size: int = 256,
-            backend: str = "cpu",
-            remote_url: Optional[str] = "lm://localhost:65432",
-            remote_serde: str = "naive",
-            save_decode_cache: bool = False,
-            enable_blending: bool = False,
-            blend_recompute_ratio: float = 0.15,
-            blend_min_tokens: int = 256,
-            blend_special_str: str = " # # ",
-            max_local_disk_size: float = 0.0,
-            enable_p2p: bool = False,
-            lookup_url: Optional[str] = None,
-            distributed_url: Optional[str] = None,
-            error_handling: bool = False,
+        chunk_size: int = 256,
+        backend: str = "cpu",
+        remote_url: Optional[str] = "lm://localhost:65432",
+        remote_serde: str = "naive",
+        save_decode_cache: bool = False,
+        enable_blending: bool = False,
+        blend_recompute_ratio: float = 0.15,
+        blend_min_tokens: int = 256,
+        blend_special_str: str = " # # ",
+        max_local_disk_size: float = 0.0,
+        enable_p2p: bool = False,
+        lookup_url: Optional[str] = None,
+        distributed_url: Optional[str] = None,
+        error_handling: bool = False,
     ) -> "LMCacheEngineConfig":
         # TODO (ApostaC): Add nixl config
         if backend == "cpu":
@@ -246,18 +251,18 @@ class LMCacheEngineConfig:
 
     @staticmethod
     def from_defaults(
-            chunk_size: int = 256,
-            local_device: str = "cuda",
-            max_local_cache_size: int = 5,
-            remote_url: Optional[str] = "redis://localhost:6379",
-            remote_serde: Optional[str] = "torch",
-            pipelined_backend: bool = False,
-            save_decode_cache: bool = False,
-            enable_blending: bool = False,
-            blend_recompute_ratio: float = 0.15,
-            blend_min_tokens: int = 256,
-            blend_separator: str = blend_default_separator,
-            blend_add_special_in_precomp: bool = False,
+        chunk_size: int = 256,
+        local_device: str = "cuda",
+        max_local_cache_size: int = 5,
+        remote_url: Optional[str] = "redis://localhost:6379",
+        remote_serde: Optional[str] = "torch",
+        pipelined_backend: bool = False,
+        save_decode_cache: bool = False,
+        enable_blending: bool = False,
+        blend_recompute_ratio: float = 0.15,
+        blend_min_tokens: int = 256,
+        blend_separator: str = blend_default_separator,
+        blend_add_special_in_precomp: bool = False,
     ) -> "LMCacheEngineConfig":
         return LMCacheEngineConfig(
             chunk_size=chunk_size,
@@ -273,7 +278,6 @@ class LMCacheEngineConfig:
             blend_separator=blend_separator,
             blend_add_special_in_precomp=blend_add_special_in_precomp,
         )
-
 
     def validate(self) -> 'LMCacheEngineConfig':
         """Validate the config

@@ -1,6 +1,10 @@
 from typing import Type, Dict
 
 from leetcuda.lmcache.storage_backend.cache_policy.base_policy import BaseCachePolicy
+from leetcuda.lmcache.storage_backend.cache_policy.fifo import FIFOCachePolicy
+from leetcuda.lmcache.storage_backend.cache_policy.lfu import LFUCachePolicy
+from leetcuda.lmcache.storage_backend.cache_policy.lru import LRUCachePolicy
+from leetcuda.lmcache.storage_backend.cache_policy.mru import MRUCachePolicy
 
 POLICY_MAPPING: Dict[str, Type[BaseCachePolicy]] = {
     "LRU": LRUCachePolicy,
