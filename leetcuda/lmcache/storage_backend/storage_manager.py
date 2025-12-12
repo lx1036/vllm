@@ -146,15 +146,11 @@ class StorageManager:
         Allocate memory object with memory allocator.
         Use LRU evictor if eviction is enabled.
         """
-        self.manager_lock.acquire()
-        memory_obj = self.memory_allocator.allocate(shape, dtype)
-        if not eviction or memory_obj is not None:
-            self.manager_lock.release()
-            return memory_obj
-
-
-        self.manager_lock.release()
-        return memory_obj
+        # TODO (Jiayi): We might need to pre-allocate and management
+        # disk in a similar way as CPU.
+        return self.allocator_backend.allocate(
+            shape, dtype, fmt, eviction=eviction, busy_loop=busy_loop
+        )
 
 
 

@@ -2,10 +2,11 @@ import struct
 from dataclasses import dataclass
 from typing import Optional
 
-from leetcuda.lmcache.utils import CacheEngineKey
 from leetcuda.lmcache.memory_management import MemoryFormat
 
 import torch
+
+from leetcuda.lmcache.types import CacheEngineKey
 
 MAX_KEY_LENGTH = 150
 
@@ -134,3 +135,52 @@ class ServerMetaMessage:
 
 
 
+@dataclass
+class RemoteMetadata:
+    length: int
+    shape: torch.Size
+    dtype: Optional[torch.dtype]
+    fmt: MemoryFormat
+
+    def serialize(self) -> bytes:
+        # NOTE(Jiayi): 4 is the maximum dimension of memory object.
+        # Pass in shape [x, 0, 0, 0] if it is a bytes memory object
+        assert len(self.shape) == 4, "Shape dimension should be 4"
+
+        packed_bytes = struct.pack(
+            "iiiiiii",
+            self.length,
+            int(self.fmt.value),
+            DTYPE_TO_INT[self.dtype],
+            self.shape[0],
+            self.shape[1],
+            self.shape[2],
+            self.shape[3],
+        )
+        return packed_bytes
+
+    def serialize_into(self, buffer):
+        assert len(self.shape) == 4, "Shape dimension should be 4"
+
+        struct.pack_into(
+            "iiiiiii",
+            buffer,
+            0,
+            self.length,
+            int(self.fmt.value),
+            DTYPE_TO_INT[self.dtype],
+            self.shape[0],
+            self.shape[1],
+            self.shape[2],
+            self.shape[3],
+        )
+
+    @staticmethod
+    def deserialize(s: bytes) -> "RemoteMetadata":
+        length, fmt, dtype, shape0, shape1, shape2, shape3 = struct.unpack_from("iiiiiii", s)
+        return RemoteMetadata(
+            length,
+            torch.Size([shape0, shape1, shape2, shape3]),
+            INT_TO_DTYPE[dtype],
+            MemoryFormat(fmt),
+        )

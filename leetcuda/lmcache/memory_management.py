@@ -4,7 +4,7 @@ import threading
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Union, Tuple, List
+from typing import Optional, Union, Tuple, List, Any
 
 import sortedcontainers
 import torch
@@ -55,6 +55,11 @@ class MemoryObjMetadata:
     cached_positions: Optional[torch.Tensor] = None
 
 class MemoryObj(metaclass=abc.ABCMeta):
+    # subclasses should expose raw_data differently
+    raw_data: Any
+
+    def __init__(self, metadata: MemoryObjMetadata):
+        self.meta = metadata
 
     @abc.abstractmethod
     def invalidate(self):

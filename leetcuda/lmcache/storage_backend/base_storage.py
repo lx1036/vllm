@@ -2,7 +2,7 @@ import abc
 from typing import Optional
 from concurrent.futures import Future
 
-from leetcuda.lmcache.memory_management import MemoryObj
+from leetcuda.lmcache.memory_management import MemoryObj, MemoryFormat
 from leetcuda.lmcache.utils import CacheEngineKey
 
 import torch

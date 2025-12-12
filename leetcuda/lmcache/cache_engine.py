@@ -55,6 +55,16 @@ class LMCacheEngine:
     ):
         """
         Store the tokens/hashes and mask into the cache engine.
+        Format: either 'huggingface' or 'vllm'
+
+                For huggingface,
+                it should have the shape of
+                [num_heads, num_tokens, head_size]
+
+                For vllm,
+                it should have the shape of
+                [num_tokens, num_heads, head_size]
+
         :param tokens:
         :param mask:
         :param kwargs:

@@ -11,7 +11,6 @@ from leetcuda.lmcache.storage_backend.connector.base_connector import RemoteConn
 from leetcuda.lmcache.storage_backend.connector.blackhole_connector import BlackholeConnector
 from leetcuda.lmcache.storage_backend.connector.lmcache_server_connector import LMCServerConnector
 from leetcuda.lmcache.storage_backend.connector.redis_connector import RedisConnector
-from leetcuda.lmcache.utils import CacheEngineKey
 
 logger = init_logger(__name__)
 
@@ -118,7 +117,8 @@ def CreateConnector(url: str, loop: asyncio.AbstractEventLoop, memory_allocator:
         # case "infinistore":
 
 
-        # case "mooncakestore":
+        case "mooncakestore":
+            connector = MooncakeStoreConnector(host, port, loop, memory_allocator)
 
         case "blackhole":
             connector = BlackholeConnector(memory_allocator)
