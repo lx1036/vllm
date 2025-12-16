@@ -17,6 +17,23 @@ from leetcuda.lmcache.utils import CacheEngineKey, _lmcache_nvtx_annotate
 
 logger = init_logger(__name__)
 
+"""
+local_cpu=False # Enable/disable local CPU caching (set to False for pure Mooncake evaluation)
+max_local_cpu_size=5 # 5GiB # Maximum local CPU cache size in GB (required even when local_cpu is False)
+
+https://docs.lmcache.ai/kv_cache/storage_backends/cpu_ram.html
+LMCache 使用 系统内存 作为 L2 Cache. 配置参数
+
+# 256 Tokens per KV Chunk
+chunk_size: 256
+# Enable CPU memory backend
+local_cpu: true # default
+# 5GB of Pinned CPU memory
+max_local_cpu_size: 5.0 # default
+
+max_local_cpu_size 必须>0，因为本地或者远程后端在从L1 GPU HBM 传输KVCache时，也需要用 CPU RAM作为中间缓冲区。
+
+"""
 
 class LocalCPUBackend(AllocatorBackendInterface):
     """
@@ -26,12 +43,12 @@ class LocalCPUBackend(AllocatorBackendInterface):
     """
 
     def __init__(
-            self,
-            config: LMCacheEngineConfig,
-            metadata: Optional[LMCacheEngineMetadata] = None,
-            dst_device: str = "cuda",
-            lmcache_worker: Optional["LMCacheWorker"] = None,
-            memory_allocator: Optional[MemoryAllocatorInterface] = None,
+        self,
+        config: LMCacheEngineConfig,
+        metadata: Optional[LMCacheEngineMetadata] = None,
+        dst_device: str = "cuda",
+        lmcache_worker: Optional["LMCacheWorker"] = None,
+        memory_allocator: Optional[MemoryAllocatorInterface] = None,
     ):
         if torch.cuda.is_available():
             super().__init__(dst_device)
@@ -40,8 +57,8 @@ class LocalCPUBackend(AllocatorBackendInterface):
 
         self.cache_policy = get_cache_policy(config.cache_policy)
         self.hot_cache = self.cache_policy.init_mutable_mapping()
+        self.use_hot = config.local_cpu # 包含来自磁盘和远程存储的KV缓存的最热子集
 
-        self.use_hot = config.local_cpu
         # NOTE: we keep the memory allocator argument for temporary
         # test compatibility
         # TODO: fix the tests to get rid the memory allocator

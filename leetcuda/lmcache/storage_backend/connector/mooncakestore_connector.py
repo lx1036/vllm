@@ -87,6 +87,9 @@ class MooncakeStoreConfig:
 class MooncakestoreConnector(RemoteConnector):
     def __init__(
         self,
+        host: str,
+        port: int,
+        device_name,
         local_cpu_backend: LocalCPUBackend,
         lmcache_config: Optional[LMCacheEngineConfig],
     ):
@@ -112,8 +115,8 @@ class MooncakestoreConnector(RemoteConnector):
 
             if host != "" and port != 0:
                self.config.master_server_address = host + ":" + str(port)
-            if dev_name != "":
-               self.config.device_name = dev_name
+            if device_name != "":
+               self.config.device_name = device_name
             logger.info("Mooncake Configuration loaded. config: %s", self.config)
 
             # Check if storage_root_dir exists and set environment variable
