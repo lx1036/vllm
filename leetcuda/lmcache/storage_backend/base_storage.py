@@ -1,8 +1,9 @@
 import abc
-from typing import Optional
+from typing import Optional, List
 from concurrent.futures import Future
 
-from leetcuda.lmcache.memory_management import MemoryObj, MemoryFormat
+from leetcuda.lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata
+from leetcuda.lmcache.memory_management import MemoryObj, MemoryFormat, MemoryAllocatorInterface
 from leetcuda.lmcache.utils import CacheEngineKey
 
 import torch
@@ -41,89 +42,55 @@ class AllocatorBackendInterface(StorageBackendInterface):
     """
 
     @abc.abstractmethod
-    def initialize_allocator(
-            self, config: LMCacheEngineConfig, metadata: LMCacheEngineMetadata
-    ) -> MemoryAllocatorInterface:
-        """
-        Create the correct memory allocator for the current storage backend
-
-        Args:
-            config: The cache engine config
-            metadata: the cache engine metadata
-
-        Returns:
-            The memory allocator for this storage backend
-        """
+    def initialize_allocator(self, config: LMCacheEngineConfig, metadata: LMCacheEngineMetadata) -> MemoryAllocatorInterface:
         raise NotImplementedError
 
     @abc.abstractmethod
     def get_memory_allocator(self) -> MemoryAllocatorInterface:
+        raise NotImplementedError
+
+    def batched_get_blocking(self, keys: List[CacheEngineKey]) -> List[Optional[MemoryObj]]:
         """
-        Returns:
-            The underlying memory allocator
+        A blocking function to get the kv cache from the storage backend.
+
+        :param List[CacheEngineKey] keys: The keys of the MemoryObjs.
+
+        :return: a list of memory objects.
+        """
+        mem_objs = []
+        for key in keys:
+            mem_objs.append(self.get_blocking(key))
+        return mem_objs
+
+    @abc.abstractmethod
+    def get_blocking(self, key: CacheEngineKey) -> Optional[MemoryObj]:
+        """
+        A blocking function to get the kv cache from the storage backend.
         """
         raise NotImplementedError
 
     @abc.abstractmethod
     def allocate(
-            self,
-            shape: torch.Size,
-            dtype: torch.dtype,
-            fmt: MemoryFormat = MemoryFormat.KV_2LTD,
-            eviction: bool = True,
-            busy_loop: bool = True,
+        self,
+        shape: torch.Size,
+        dtype: torch.dtype,
+        fmt: MemoryFormat = MemoryFormat.KV_2LTD,
+        eviction: bool = True,
+        busy_loop: bool = True,
     ) -> Optional[MemoryObj]:
-        """
-        Allocates memory in the backend to hold a tensor of the given shape.
-
-        :param torch.Size shape: The shape of the tensor to allocate.
-        :param torch.dtype dtype: The dtype of the tensor to allocate.
-        :param MemoryFormat fmt: The format of the memory to allocate.
-        :param bool eviction: whether to enable eviction when allocating.
-        :param bool busy_loop: whether to enable a busy loop to wait
-            for in-progress store operations to finish and release the
-            memory space for retrieve.
-
-        :return: A MemoryObj wrapping the allocated memory. Returns
-            None if the allocation failed.
-
-        :rtype: Optional[MemoryObj]
-        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def batched_allocate(
-            self,
-            shape: torch.Size,
-            dtype: torch.dtype,
-            batch_size: int,
-            fmt: MemoryFormat = MemoryFormat.KV_2LTD,
-            eviction: bool = True,
-            busy_loop: bool = True,
+        self,
+        shape: torch.Size,
+        dtype: torch.dtype,
+        batch_size: int,
+        fmt: MemoryFormat = MemoryFormat.KV_2LTD,
+        eviction: bool = True,
+        busy_loop: bool = True,
     ) -> Optional[list[MemoryObj]]:
-        """
-        Allocates memory in the backend to hold a tensor of the given shape
-        in a batched manner. The allocated memory objects will have the same
-        shape, dtype, and format.
-
-        :param torch.Size shape: The shape of the tensor to allocate.
-        :param torch.dtype dtype: The dtype of the tensor to allocate.
-        :param int batch_size: The number of memory objects to allocate.
-        :param MemoryFormat fmt: The format of the memory to allocate.
-        :param bool eviction: whether to enable eviction when allocating.
-        :param bool busy_loop: whether to enable a busy loop to wait
-            for in-progress store operations to finish and release the
-            memory space for retrieve.
-
-        :return: A MemoryObj wrapping the allocated memory. Returns
-            None if the allocation failed.
-
-        :rtype: Optional[MemoryObj]
-        """
         raise NotImplementedError
 
     def calculate_chunk_budget(self) -> int:
-        """
-        Calculate the chunk budget for the allocator backend.
-        """
         raise NotImplementedError

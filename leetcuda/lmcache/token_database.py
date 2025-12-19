@@ -19,10 +19,13 @@ class TokenDatabase(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def process_tokens(
-            self,
-            tokens: Union[torch.Tensor, List[int]],
-            mask: Optional[torch.Tensor] = None,
-            make_key: bool = True,
+        self,
+        tokens: Optional[Union[torch.Tensor, List[int]]] = None,
+        hashes: Optional[List[int]] = None,
+        offsets: Optional[List[int]] = None,
+        mask: Optional[torch.Tensor] = None,
+        make_key: bool = True,
+        request_configs: Optional[dict] = None,
     ) -> Iterable[Tuple[int, int, Union[CacheEngineKey, str]]]:
         raise NotImplementedError
 
@@ -33,14 +36,15 @@ class ChunkedTokenDatabase(TokenDatabase):
             self.chunk_size = config.chunk_size # 256
         self.metadata = metadata
 
+    # info: 还是每太明白，输入 token_ids，怎么处理成 []CacheEngineKey
     def process_tokens(
-            self,
-            tokens: Optional[Union[torch.Tensor, List[int]]] = None,
-            hashes: Optional[List[int]] = None,
-            offsets: Optional[List[int]] = None,
-            mask: Optional[torch.Tensor] = None,
-            make_key: bool = True,
-            request_configs: Optional[dict] = None,
+        self,
+        tokens: Optional[Union[torch.Tensor, List[int]]] = None,
+        hashes: Optional[List[int]] = None,
+        offsets: Optional[List[int]] = None,
+        mask: Optional[torch.Tensor] = None,
+        make_key: bool = True,
+        request_configs: Optional[dict] = None,
     ) -> Iterable[Tuple[int, int, Union[CacheEngineKey, int]]]:
         """
         Process the tokens and return the corresponding cache engine keys.
@@ -60,7 +64,7 @@ class ChunkedTokenDatabase(TokenDatabase):
         if tokens is not None:
             total_len = len(tokens)
             token_chunks = self.chunk_tokens(tokens)
-            prefix_hashes = self.prefix_hash(token_chunks)
+            prefix_hashes = self.prefix_hash(token_chunks) # info: 这里的 prefix hash 是什么?
             start_idx = 0
             for chunk_id, hash_val in enumerate(prefix_hashes):
                 start_idx = chunk_id * self.chunk_size
@@ -95,15 +99,12 @@ class ChunkedTokenDatabase(TokenDatabase):
         for i in range(0, len(tokens), self.chunk_size):
             yield tokens[i: i+self.chunk_size]
 
+    # info: 意思是每一个 chunk 的 hash 值都是基于前一个 chunk 的 hash 值计算出来的？
     def prefix_hash(self, token_chunks: Iterable[Union[torch.Tensor, List[int]]]) -> Iterable[str]:
         prefix_hash = self.get_init_hash()
         for token_chunk in token_chunks:
             prefix_hash = self.hash(token_chunk, prefix_hash)
             yield prefix_hash
-
-    def make_key_by_hash(self, chunk_hash: str, request_configs: Optional[dict] = None):
-        assert self.metadata is not None
-        return CacheEngineKey(self.metadata.fmt, self.metadata.model_name, self.metadata.world_size, self.metadata.worker_id, chunk_hash, request_configs)
 
     def get_init_hash(self) -> str:
         return ""
@@ -112,11 +113,19 @@ class ChunkedTokenDatabase(TokenDatabase):
         # TODO: change it to a more efficient hash function
         tokens_bytes: bytes = bytes()
         if isinstance(tokens, torch.Tensor):
-            tokens_bytes = tokens.cpu().to(torch.uint32).numpy().tobytes()
+            tokens_bytes = tokens.cpu().to(torch.uint32).numpy().tobytes() # info: 如果是 tensor，则需要获取 tensor 的 bytes
         elif isinstance(tokens, list):
-            tokens_bytes = array.array('I', tokens).tobytes()
+            tokens_bytes = array.array('I', tokens).tobytes() # info: 如果是 []int, 则直接转换成 bytes
 
         return hashlib.sha256(prefix_hash.encode("ascii") + tokens_bytes).hexdigest()
+
+    def make_key_by_hash(self, chunk_hash: str, request_configs: Optional[dict] = None):
+        assert self.metadata is not None
+        return CacheEngineKey(self.metadata.fmt, self.metadata.model_name, self.metadata.world_size, self.metadata.worker_id, chunk_hash, request_configs)
+
+
+
+
 
 
 

@@ -3,7 +3,7 @@ import ctypes
 import threading
 from abc import ABC
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, auto
 from typing import Optional, Union, Tuple, List, Any
 
 import sortedcontainers
@@ -19,12 +19,25 @@ class MemoryFormat(Enum):
     UNDEFINED = 0
     """[2, num_layers, num_tokens, hidden_dim]
     """
-    KV_BLOB = 1
+    # KV_BLOB = 1
+    KV_2LTD = auto()
+    """[num_tokens, 2, hidden_dim]
+    """
+    # LAYER_KV_BLOB = 2
+    KV_T2D = auto()
+    """[2, num_tokens, hidden_dim]
+    """
+
+    KV_2TD = auto()
     """Compressed binary array format
     """
-    BINARY = 2
+    BINARY = auto()
 
-    BINARY_BUFFER = 3
+    BINARY_BUFFER = auto()
+
+    KV_MLA_FMT = auto()
+    """[1, num_layers, num_tokens, aligned_head_size]
+    """
 
 @dataclass
 class MemoryObjMetadata:

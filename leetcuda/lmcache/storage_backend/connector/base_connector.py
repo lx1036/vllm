@@ -71,6 +71,19 @@ class RemoteConnector(metaclass=abc.ABCMeta):
     async def get(self, key: CacheEngineKey) -> Optional[MemoryObj]:
         raise NotImplementedError
 
+    async def batched_get(self, keys: List[CacheEngineKey]) -> List[Optional[MemoryObj]]:
+        """
+        Batched get the memory_objs of the corresponding keys
+
+        Input:
+            keys: the keys of the corresponding objects
+
+        Returns:
+            The memory_objs of the corresponding keys
+            Return None if the key does not exist
+        """
+        raise NotImplementedError
+
     def reshape_partial_chunk(self, memory_obj: MemoryObj, bytes_read: int) -> MemoryObj:
         assert self.full_chunk_size is not None
         assert self.single_token_size is not None

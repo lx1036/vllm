@@ -5,17 +5,16 @@ from typing import Optional, OrderedDict, List, Dict, Tuple, Sequence
 from leetcuda.lmcache.cache_controller.worker import LMCacheWorker
 from leetcuda.lmcache.config import LMCacheEngineMetadata, LMCacheEngineConfig
 from leetcuda.lmcache.lookup_server.abstract_server import LookupServerInterface
-from leetcuda.lmcache.memory_management import MemoryAllocatorInterface, MemoryObj, MemoryObjMetadata
-from leetcuda.lmcache.storage_backend.base_backend import StorageBackendInterface
-from leetcuda.lmcache.storage_backend.local_disk_backend import LocalDiskBackend
-from leetcuda.lmcache.storage_backend.remote_backend import RemoteBackend
+from leetcuda.lmcache.memory_management import MemoryAllocatorInterface, MemoryObj, MemoryObjMetadata, MemoryFormat
 from leetcuda.lmcache.log import init_logger
-from leetcuda.lmcache.storage_backend.base_storage import AllocatorBackendInterface
-from leetcuda.lmcache.utils import CacheEngineKey
+from leetcuda.lmcache.storage_backend.base_storage import AllocatorBackendInterface, StorageBackendInterface
 
 import torch
 
 from concurrent.futures import Future
+
+from leetcuda.lmcache.storage_backend.local_disk_storage import LocalDiskBackend
+from leetcuda.lmcache.storage_backend.remote_storage import RemoteBackend
 
 logger = init_logger(__name__)
 
@@ -141,16 +140,37 @@ class StorageManager:
         return False
 
 
-    def allocate(self, shape: torch.Size, dtype: torch.dtype, eviction=True) -> Optional[MemoryObj]:
+    def batched_get(
+            self,
+            keys: List[CacheEngineKey],
+            location: Optional[str] = None,
+    ) -> Optional[List[Optional[MemoryObj]]]:
         """
-        Allocate memory object with memory allocator.
-        Use LRU evictor if eviction is enabled.
+        Blocking function to get the memory objects from the storages.
         """
-        # TODO (Jiayi): We might need to pre-allocate and management
-        # disk in a similar way as CPU.
-        return self.allocator_backend.allocate(
-            shape, dtype, fmt, eviction=eviction, busy_loop=busy_loop
-        )
+        for backend_name, storage_backend in self.storage_backends.items():
+            if location and backend_name != location:
+                continue
+            memory_objs = storage_backend.batched_get_blocking(keys)
+            if memory_objs:
+                return memory_objs
+        return None
+
+
+    def allocate(
+        self,
+        shape: torch.Size,
+        dtype: torch.dtype,
+        fmt: MemoryFormat = MemoryFormat.KV_2LTD,
+        eviction=True,
+        busy_loop=True,
+    ) -> Optional[MemoryObj]:
+        """
+        会实际占用内存，如果内存不够，分配不出足够内存存储 memory_obj 对象
+        1.MemoryAllocator 分配系统内存(默认max_local_cpu_size=5GB)，8张卡，每张卡占用 5GB.
+        2.采用 LRU evictor
+        """
+        return self.allocator_backend.allocate(shape, dtype, fmt, eviction=eviction, busy_loop=busy_loop)
 
 
 

@@ -1,4 +1,5 @@
 import time
+from collections import defaultdict
 from typing import Optional, Dict, List, Union, Tuple, Generator
 
 import torch
@@ -8,11 +9,12 @@ from leetcuda.lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata
 from leetcuda.lmcache.gpu_connector import GPUConnectorInterface
 from leetcuda.lmcache.log import init_logger
 from leetcuda.lmcache.lookup_server.abstract_server import LookupServerInterface
-from leetcuda.lmcache.memory_management import MemoryAllocatorInterface, MixedMemoryAllocator
+from leetcuda.lmcache.memory_management import MemoryAllocatorInterface, MixedMemoryAllocator, MemoryFormat, MemoryObj
 from leetcuda.lmcache.observability import LMCStatsMonitor, LMCacheStatsLogger
 from leetcuda.lmcache.storage_backend.storage_manager import StorageManager
 from leetcuda.lmcache.token_database import TokenDatabase, ChunkedTokenDatabase
-from leetcuda.lmcache.utils import _lmcache_nvtx_annotate, CacheEngineKey
+from leetcuda.lmcache.types import CacheEngineKey
+from leetcuda.lmcache.utils import _lmcache_nvtx_annotate
 
 logger = init_logger(__name__)
 
@@ -23,23 +25,37 @@ class LMCacheEngine:
     MemoryObjs from Engine -> (GPUConnectors) -> KVCache
     """
 
-    def __init__(self, config: LMCacheEngineConfig,
-                 metadata: LMCacheEngineMetadata,
-                 memory_allocator: MemoryAllocatorInterface,
-                 token_database: TokenDatabase,
-                 gpu_connector: GPUConnectorInterface,):
+    def __init__(
+        self, config: LMCacheEngineConfig,
+        metadata: LMCacheEngineMetadata,
+        memory_allocator: MemoryAllocatorInterface,
+        token_database: TokenDatabase,
+        gpu_connector: GPUConnectorInterface,
+    ):
         logger.info(f"Creating LMCacheEngine with config: {config}")
         self.config = config
         self.token_database = token_database
         self.memory_allocator = memory_allocator
         self.lookup_server: Optional[LookupServerInterface] = None
         self.gpu_connector = gpu_connector
+        self.async_loading = config.enable_async_loading
+
 
         self.lmcache_worker: Optional[LMCacheWorker] = None
         if self.config.enable_controller:
             self.lmcache_worker = LMCacheWorker(config, metadata, self)
 
         self.storage_manager = StorageManager(config, metadata, self.memory_allocator, self.lmcache_worker, self.lookup_server)
+
+        self.use_layerwise = config.use_layerwise
+        self.fmt = None
+        if self.use_layerwise:
+            if config.enable_blending:
+                self.fmt = MemoryFormat.KV_2TD
+            else:
+                self.fmt = MemoryFormat.KV_T2D
+        if metadata.use_mla:
+            self.fmt = MemoryFormat.KV_MLA_FMT
 
 
 
@@ -54,26 +70,28 @@ class LMCacheEngine:
         **kwargs,
     ):
         """
-        Store the tokens/hashes and mask into the cache engine.
-        Format: either 'huggingface' or 'vllm'
+        Store the tokens/hashes and mask into the local storage(local memory) or remote storage(redis, mooncake).
 
-                For huggingface,
-                it should have the shape of
-                [num_heads, num_tokens, head_size]
+        :param Optional[torch.Tensor] tokens: The tokens of the corresponding KV caches.
 
-                For vllm,
-                it should have the shape of
-                [num_tokens, num_heads, head_size]
+        :param Optional[List[int]] hashes: The hashes of the corresponding KV caches.
 
-        :param tokens:
-        :param mask:
-        :param kwargs:
-        :return:
+        :param **kwargs: The additional arguments for the storage backend which
+            will be passed into the gpu_connector.
+            Should include KV cache specific information (e.g., paged KV buffer
+            and the page tables).
+
+        used:
+        lmcache_engine.store(
+            token_ids,
+            mask=store_mask,
+            kvcaches=kvcaches,
+            slot_mapping=slot_mapping,
+            offset=skip_leading_tokens,
+            transfer_spec=request.disagg_spec,
+            request_configs=request.request_configs,
+        )
         """
-        if self.is_passive():
-            logger.debug(f"rank={self.metadata.worker_id} ignore store")
-            return
-
         if mask is not None:
             num_to_store_tokens = torch.sum(mask).item()
         elif tokens is not None:
@@ -85,7 +103,6 @@ class LMCacheEngine:
 
         assert tokens is not None or hashes is not None, "Either 'tokens' or 'hashes' must be provided."
 
-        monitor_req_id = self.stats_monitor.on_store_request(num_to_store_tokens)
         starts = []
         ends = []
         keys = []
@@ -106,9 +123,10 @@ class LMCacheEngine:
             num_tokens = end - start
             kv_shape = self.gpu_connector.get_shape(num_tokens)
             kv_dtype = self.metadata.kv_dtype
-            # TODO (Jiayi): should be batched in the future
-            memory_obj = self.storage_manager.allocate(kv_shape, kv_dtype, busy_loop=self.force_store_wait)
-            if memory_obj is None:
+
+            # 1. create local memory(memory_objs)
+            memory_obj = self.storage_manager.allocate(kv_shape, kv_dtype, busy_loop=self.force_store_wait, fmt=self.fmt)
+            if memory_obj is None: # 测试时有该报错，需要调大 max_local_cpu_size 值由默认5GB为20GB
                 logger.warning("Local cpu memory under pressure so choosing to not store the KV cache.")
                 break
 
@@ -119,16 +137,21 @@ class LMCacheEngine:
             tot_kv_size += memory_obj.get_size()
             tot_token_num += num_tokens
 
-        # memory_objs might be empty, directly return to avoid sending tokens
         if not memory_objs:
             return
+
+        # 2. offload: GPU(HBM) -> local memory(memory_objs)
         self.gpu_connector.batched_from_gpu(memory_objs, starts, ends, **kwargs)
         offload_time += time.perf_counter() - t
+
         t = time.perf_counter()
+        # 3. put: local memory(memory_objs) -> local/remote storage
         transfer_spec = kwargs.get("transfer_spec", None)
         self.storage_manager.batched_put(keys, memory_objs, transfer_spec=transfer_spec)
         put_time += time.perf_counter() - t
         tot_time = offload_time + put_time
+
+        # Stored 24 out of total 24 tokens. size: 0.0015 gb, cost 1.0393 ms, throughput: 1.4094 GB/s; offload_time: 0.8446 ms, put_time: 0.1947 ms
         logger.info(
             "Stored %d out of total %d tokens. size: %.4f gb, cost %.4f ms, "
             "throughput: %.4f GB/s; offload_time: %.4f ms, put_time: %.4f ms",
@@ -140,8 +163,6 @@ class LMCacheEngine:
             offload_time * 1000,
             put_time * 1000,
         )
-
-        self.stats_monitor.on_store_finished(monitor_req_id, tot_token_num)
 
     @_lmcache_nvtx_annotate
     @torch.inference_mode()
@@ -258,12 +279,112 @@ class LMCacheEngine:
         return end
 
 
-    def is_passive(self):
+    @_lmcache_nvtx_annotate
+    @torch.inference_mode()
+    def retrieve(
+        self,
+        tokens: Union[torch.Tensor, list[int]], # token_ids: list[int]
+        mask: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> torch.Tensor:
         """
-        A 'passive' CacheEngine means that the node itself will not store/retrieve
-        the data directly, but from the "active" worker (i.e., rank 0 in MLA)
+        Retrieve KVCaches from local/remote storage(local-memory/redis/mooncake)
         """
-        return self.save_only_first_rank and not self.metadata.is_first_rank()
+
+        ret_mask = torch.zeros(len(tokens), dtype=torch.bool, device="cpu")
+
+
+        # 1. Retrieve KVCache from local/remote storage to local memory(memory_objs)
+        reordered_chunks: List[Tuple[CacheEngineKey, MemoryObj, int, int]] = []
+        if self.async_loading:
+            reordered_chunks, tot_kv_size = self.async_process_tokens_internal(tokens, mask, ret_mask, **kwargs)
+        else:
+            reordered_chunks, tot_kv_size = self.process_tokens_internal(tokens, mask, ret_mask, **kwargs)
+
+        # 2. Move KVCache from local memory to GPU(HBM)
+        # For example, disk->gpu is faster than disk->cpu->gpu.
+        # RDMA is another example.
+        if len(reordered_chunks) > 0:
+            _, memory_objs, starts, ends = zip(*reordered_chunks, strict=False)
+            self.gpu_connector.batched_to_gpu(
+                list(memory_objs), list(starts), list(ends), **kwargs
+            )
+
+
+
+
+        # Retrieved 133 out of 133 required tokens (from 133 total tokens). size: 0.0000 gb, cost 3.2318 ms, throughput: 0.0000 GB/s;
+        logger.info(
+            "Retrieved %d out of %d required tokens (from %d total tokens)."
+            " size: %.4f gb,"
+            " cost %.4f ms, throughput: %.4f GB/s;",
+            retrieved_tokens,
+            num_required_tokens,
+            len(tokens),
+            tot_kv_size / 1024**3,
+            onload_time * 1000,
+            tot_kv_size / onload_time / 1024**3 if onload_time > 0 else 0,
+            )
+
+        return ret_mask
+
+
+    def process_tokens_internal(self, tokens, mask, ret_mask, **kwargs) -> tuple[list[tuple[CacheEngineKey, MemoryObj, int, int]], int]:
+
+        reordered_chunks: list[tuple[CacheEngineKey, MemoryObj, int, int]] = []
+        tot_kv_size = 0
+        # location -> [(CacheEngineKey, start, end)]
+        block_mapping: dict[str, list[tuple[CacheEngineKey, int, int]]] = defaultdict(list)
+
+        for start, end, key in self.token_database.process_tokens(
+                tokens=tokens,
+                mask=mask,
+                request_configs=request_configs,
+        ):
+            assert isinstance(key, CacheEngineKey)
+            location = None
+            if key in self.lookup_cache:
+                # TODO(Jiayi): we can reduce the number of `contains` calls
+                # by checking the lookup cache first (should be updated in `lookup`)
+                pass
+            else:
+                location = self.storage_manager.contains(key)
+                if location is None:
+                    break
+
+                # NOTE: Here we make the assumption that the underlying
+                # storage backend support pin operation, and the memory
+                # object is already pinned in the storage backend.
+                ret_mask[start:end] = True
+
+            assert location is not None
+            block_mapping[location].append((key, start, end))
+
+
+
+
+
+        for location, blocks in block_mapping.items():
+            keys = [key for key, _, _ in blocks]
+            memory_objs = self.storage_manager.batched_get(keys=keys, location=location)
+            assert memory_objs is not None, "Failed to get memory objects from storage backend"
+
+            for (key, start, end), memory_obj in zip(blocks, memory_objs, strict=False):
+                if memory_obj is None:
+                    logger.warning("The cache block is in the storage, but it can't be retrieved")
+                    if last_failed_block_start is None or last_failed_block_start < start:
+                        last_failed_block_start = start
+                    break
+                reordered_chunks.append((key, memory_obj, start, end))
+                tot_kv_size += memory_obj.get_size()
+
+
+
+
+        return reordered_chunks, tot_kv_size
+
+
+
 
     def close(self) -> None:
         logger.info("LMCacheEngine closed.")
